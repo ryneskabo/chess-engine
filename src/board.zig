@@ -49,10 +49,19 @@ pub const Board = struct {
         return self.pieces[@intFromEnum(color)][@intFromEnum(piece)];
     }
 
-    // TODO: Set correct bit in corresponding piece board and occupancy board
-    pub fn setPiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
-        
+    pub fn getMutableBoard(self: *Board, color: Color, piece: Piece) *u64 {
+        return &self.pieces[@intFromEnum(color)][@intFromEnum(piece)];
     }
+
+    pub fn setPiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
+        const board: *u64 = self.getMutableBoard(color, piece);
+        const bit: u64 = (@as(u64, 1) << sq);
+        board.* |= bit;
+        self.occupancy[@intFromEnum(color)] |= bit;
+    }
+
+    // TODO: Add matching removePiece procedure to remove piece from square
+    // pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void
 };
 
 pub const empty: Board = .{
@@ -62,4 +71,13 @@ pub const empty: Board = .{
     .castling_rights = 0b0000,
     .en_passant = null,
     .fullmove_number = 1,
+    .halfmove_clock = 0,
 };
+
+const std = @import("std");
+test "set-piece-test" {
+    var board: Board = empty;
+    board.setPiece(.white, .knight, 28);
+    try std.testing.expectEqual(board.getBoard(.white, .knight), 1 << 28);
+    try std.testing.expectEqual(board.occupancy[0], 1 << 28);
+}
