@@ -1,3 +1,5 @@
+const std = @import("std");
+
 // Use single bit of data to indicate color
 pub const Color = enum(u1) { 
     white,
@@ -62,6 +64,12 @@ pub const Board = struct {
 
     // TODO: Add matching removePiece procedure to remove piece from square
     // pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void
+    pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
+        const board: *u64 = self.getMutableBoard(color, piece);
+        const bit: u64 = (@as(u64, 1) << sq);
+        board.* &= ~bit;
+        self.occupancy[@intFromEnum(color)] &= ~bit;
+    }
 };
 
 pub const empty: Board = .{
@@ -71,13 +79,56 @@ pub const empty: Board = .{
     .castling_rights = 0b0000,
     .en_passant = null,
     .fullmove_number = 1,
-    .halfmove_clock = 0,
+    .halfmove_clock = 0, // DOUBLE CHECK THIS
 };
 
-const std = @import("std");
 test "set-piece-test" {
     var board: Board = empty;
     board.setPiece(.white, .knight, 28);
     try std.testing.expectEqual(board.getBoard(.white, .knight), 1 << 28);
     try std.testing.expectEqual(board.occupancy[0], 1 << 28);
+
+    // Check side effects
+    inline for (std.enums.values(Color)) |color| {
+        inline for (std.enums.values(Piece)) |piece| {
+            if (color != .white or piece != .knight) {
+                try std.testing.expectEqual(board.getBoard(color, piece), 0);
+            }
+        }
+    }
+
+    try std.testing.expectEqual(board.occupancy[1], 0);
+}
+
+test "remove-piece-test" {
+    var board: Board = empty;
+    board.setPiece(.white, .knight, 28);
+    try std.testing.expectEqual(board.getBoard(.white, .knight), 1 << 28);
+    try std.testing.expectEqual(board.occupancy[0], 1 << 28);
+
+    inline for (std.enums.values(Color)) |color| {
+        inline for (std.enums.values(Piece)) |piece| {
+            if (color != .white or piece != .knight) {
+                try std.testing.expectEqual(board.getBoard(color, piece), 0);
+            }
+        }
+    }
+
+    try std.testing.expectEqual(board.occupancy[1], 0);
+
+    board.removePiece(.white, .knight, 28);
+    // Make sure piece is gone
+    try std.testing.expectEqual(board.getBoard(.white, .knight), 0);
+    try std.testing.expectEqual(board.occupancy[0], 0);
+
+    // Check side effects
+    inline for (std.enums.values(Color)) |color| {
+        inline for (std.enums.values(Piece)) |piece| {
+            if (color != .white or piece != .knight) {
+                try std.testing.expectEqual(board.getBoard(color, piece), 0);
+            }
+        }
+    }
+
+    try std.testing.expectEqual(board.occupancy[1], 0);
 }
