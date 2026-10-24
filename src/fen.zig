@@ -1,15 +1,7 @@
 const std = @import("std");
 const brd = @import("board.zig");
 
-pub const InvalidFen = error {
-    InvalidNumberOfFields,
-    InvalidPiecePlacement,
-    InvalidSideToMove,
-    InvalidCastlingAbility,
-    InvalidEnPassantSquare,
-    InvalidHalfmoveClock,
-    InvalidFullmoveCounter
-};
+pub const InvalidFen = error{ InvalidNumberOfFields, InvalidPiecePlacement, InvalidSideToMove, InvalidCastlingAbility, InvalidEnPassantSquare, InvalidHalfmoveClock, InvalidFullmoveCounter };
 
 fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
     var ranks = std.mem.splitScalar(u8, pieces, '/');
@@ -22,62 +14,48 @@ fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
         for (rank) |c| {
             if (c >= '1' and c <= '8') {
                 current_file += c - '0';
-                if (current_file > 8) {
-                    return InvalidFen.InvalidPiecePlacement;
-                }
+                if (current_file > 8) return InvalidFen.InvalidPiecePlacement;
                 continue;
             }
 
-            if (current_file >= 8) {
-                return InvalidFen.InvalidPiecePlacement;
-            }
+            if (current_file >= 8) return InvalidFen.InvalidPiecePlacement;
 
             const square: brd.Square = @intCast(current_rank * 8 + current_file);
             switch (c) {
-                'P' =>  board.setPiece(.white, .pawn, square),
-                'p' =>  board.setPiece(.black, .pawn, square),
-                'N' =>  board.setPiece(.white, .knight, square),
-                'n' =>  board.setPiece(.black, .knight, square),
-                'B' =>  board.setPiece(.white, .bishop, square),
-                'b' =>  board.setPiece(.black, .bishop, square),
-                'R' =>  board.setPiece(.white, .rook, square),
-                'r' =>  board.setPiece(.black, .rook, square),
-                'Q' =>  board.setPiece(.white, .queen, square),
-                'q' =>  board.setPiece(.black, .queen, square),
-                'K' =>  board.setPiece(.white, .king, square),
-                'k' =>  board.setPiece(.black, .king, square),
+                'P' => board.setPiece(.white, .pawn, square),
+                'p' => board.setPiece(.black, .pawn, square),
+                'N' => board.setPiece(.white, .knight, square),
+                'n' => board.setPiece(.black, .knight, square),
+                'B' => board.setPiece(.white, .bishop, square),
+                'b' => board.setPiece(.black, .bishop, square),
+                'R' => board.setPiece(.white, .rook, square),
+                'r' => board.setPiece(.black, .rook, square),
+                'Q' => board.setPiece(.white, .queen, square),
+                'q' => board.setPiece(.black, .queen, square),
+                'K' => board.setPiece(.white, .king, square),
+                'k' => board.setPiece(.black, .king, square),
                 else => return InvalidFen.InvalidPiecePlacement,
             }
             current_file += 1;
         }
         rank_count += 1;
-        if (current_file != 8) {
-            return InvalidFen.InvalidPiecePlacement;
-        }
+        if (current_file != 8) return InvalidFen.InvalidPiecePlacement;
     }
-    if (rank_count != 8) {
-        return InvalidFen.InvalidPiecePlacement;
-    }
+    if (rank_count != 8) return InvalidFen.InvalidPiecePlacement;
 }
 
 fn parseSideToMove(board: *brd.Board, side: []const u8) InvalidFen!void {
-    if (side.len != 1) {
-        return InvalidFen.InvalidSideToMove;
-    }
+    if (side.len != 1) return InvalidFen.InvalidSideToMove;
 
     switch (side[0]) {
         'w' => board.side_to_move = .white,
         'b' => board.side_to_move = .black,
-        else => {
-            return InvalidFen.InvalidSideToMove;
-        }
+        else => return InvalidFen.InvalidSideToMove,
     }
 }
 
 fn parseCastlingAbility(board: *brd.Board, castling_ability: []const u8) InvalidFen!void {
-    if (castling_ability.len == 0) {
-        return InvalidFen.InvalidCastlingAbility;
-    }
+    if (castling_ability.len == 0) return InvalidFen.InvalidCastlingAbility;
 
     // Neither side has castling rights
     if (std.mem.eql(u8, castling_ability, "-")) {
@@ -90,9 +68,7 @@ fn parseCastlingAbility(board: *brd.Board, castling_ability: []const u8) Invalid
             'k' => board.castling_rights |= brd.black_kingside,
             'Q' => board.castling_rights |= brd.white_queenside,
             'q' => board.castling_rights |= brd.black_queenside,
-            else => {
-                return InvalidFen.InvalidCastlingAbility;
-            }
+            else => return InvalidFen.InvalidCastlingAbility,
         }
     }
 }
@@ -103,37 +79,27 @@ fn parseEnPassantSquare(board: *brd.Board, en_passant_square: []const u8) Invali
         return; // Already null
     }
 
-    if (en_passant_square.len != 2) {
-        return InvalidFen.InvalidEnPassantSquare;
-    }
+    if (en_passant_square.len != 2) return InvalidFen.InvalidEnPassantSquare;
 
     const file = en_passant_square[0];
     const rank = en_passant_square[1];
 
-    if (file < 'a' or file > 'h') {
-        return InvalidFen.InvalidEnPassantSquare;
-    }
+    if (file < 'a' or file > 'h') return InvalidFen.InvalidEnPassantSquare;
 
-    if (rank != '3' and rank != '6') {
-        return InvalidFen.InvalidEnPassantSquare;
-    }
+    if (rank != '3' and rank != '6') return InvalidFen.InvalidEnPassantSquare;
 
     board.en_passant = @intCast((rank - '1') * 8 + file - 'a');
 }
 
-/// Clock must be a number. Does not check if >= 100, engine can just declare it a draw when it runs. Maybe should make sure it fits into a u8
+/// Clock must be a number. Does not check if >= 100, engine can just declare it a draw when it runs.
 fn parseHalfmoveClock(board: *brd.Board, halfmove_clock: []const u8) InvalidFen!void {
-    const count: u8 = std.fmt.parseUnsigned(u8, halfmove_clock, 10) catch {
-        return InvalidFen.InvalidHalfmoveClock;
-    };
+    const count: u8 = std.fmt.parseUnsigned(u8, halfmove_clock, 10) catch return InvalidFen.InvalidHalfmoveClock;
     board.halfmove_clock = count;
 }
 
-/// Counter must be a number. Maybe should make sure the number fits into a u16.
+/// Counter must be a number.
 fn parseFullmoveCounter(board: *brd.Board, fullmove_counter: []const u8) InvalidFen!void {
-    const count: u16 = std.fmt.parseUnsigned(u16, fullmove_counter, 10) catch {
-        return InvalidFen.InvalidFullmoveCounter;
-    };
+    const count: u16 = std.fmt.parseUnsigned(u16, fullmove_counter, 10) catch return InvalidFen.InvalidFullmoveCounter;
     board.fullmove_number = count;
 }
 
@@ -160,9 +126,7 @@ pub fn parseFen(fen: []const u8) InvalidFen!brd.Board {
 
     try parseFullmoveCounter(&board, try nextField(&fields));
 
-    if (fields.next() != null) {
-        return InvalidFen.InvalidNumberOfFields;
-    }
+    if (fields.next() != null) return InvalidFen.InvalidNumberOfFields;
 
     return board;
 }
@@ -184,9 +148,9 @@ test "parses starting position" {
     try std.testing.expectEqual(@as(u64, 1 << 60), b.getBoard(.black, .king));
 
     // White occupancy
-    try std.testing.expectEqual(@as(u64, 0x000000000000FFFF), b.occupancy[@intFromEnum(brd.Color.white)]);
+    try std.testing.expectEqual(@as(u64, 0x000000000000FFFF), b.occupancy[@backingInt(brd.Color.white)]);
     // Black occupancy
-    try std.testing.expectEqual(@as(u64, 0xFFFF000000000000), b.occupancy[@intFromEnum(brd.Color.black)]);
+    try std.testing.expectEqual(@as(u64, 0xFFFF000000000000), b.occupancy[@backingInt(brd.Color.black)]);
 
     // Side to move
     try std.testing.expectEqual(brd.Color.white, b.side_to_move);
@@ -205,19 +169,19 @@ test "parses starting position" {
 
     // Occupancy check, same across all tests
     var white_occ: u64 = 0;
-    for (b.pieces[@intFromEnum(brd.Color.white)]) |bb| {
+    for (b.pieces[@backingInt(brd.Color.white)]) |bb| {
         white_occ |= bb;
     }
-    try std.testing.expectEqual(b.occupancy[@intFromEnum(brd.Color.white)], white_occ);
+    try std.testing.expectEqual(b.occupancy[@backingInt(brd.Color.white)], white_occ);
 
     var black_occ: u64 = 0;
-    for (b.pieces[@intFromEnum(brd.Color.black)]) |bb| {
+    for (b.pieces[@backingInt(brd.Color.black)]) |bb| {
         black_occ |= bb;
     }
-    try std.testing.expectEqual(b.occupancy[@intFromEnum(brd.Color.black)], black_occ);
+    try std.testing.expectEqual(b.occupancy[@backingInt(brd.Color.black)], black_occ);
 
     // No overlap
-    try std.testing.expectEqual(0, b.occupancy[@intFromEnum(brd.Color.white)] & b.occupancy[@intFromEnum(brd.Color.black)]);
+    try std.testing.expectEqual(0, b.occupancy[@backingInt(brd.Color.white)] & b.occupancy[@backingInt(brd.Color.black)]);
 }
 
 test "parses after 1.e4" {
@@ -241,7 +205,7 @@ test "partial castling and large counters" {
 
     // halfmove
     try std.testing.expectEqual(12, b.halfmove_clock);
- 
+
     // fullmove
     try std.testing.expectEqual(40, b.fullmove_number);
 }
@@ -253,8 +217,8 @@ test "no castling rights" {
     try std.testing.expectEqual(0, b.castling_rights);
 
     // Pieces, should have only two bits set in board.
-    try std.testing.expectEqual(1, @popCount(b.occupancy[@intFromEnum(brd.Color.white)]));
-    try std.testing.expectEqual(1, @popCount(b.occupancy[@intFromEnum(brd.Color.black)]));
+    try std.testing.expectEqual(1, @popCount(b.occupancy[@backingInt(brd.Color.white)]));
+    try std.testing.expectEqual(1, @popCount(b.occupancy[@backingInt(brd.Color.black)]));
 
     var total: u32 = 0;
     for (b.pieces) |per_color| {
@@ -278,8 +242,8 @@ test "kiwipete" {
     const b = try parseFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
 
     // Pieces
-    try std.testing.expectEqual(16, @popCount(b.occupancy[@intFromEnum(brd.Color.white)]));
-    try std.testing.expectEqual(16, @popCount(b.occupancy[@intFromEnum(brd.Color.black)]));
+    try std.testing.expectEqual(16, @popCount(b.occupancy[@backingInt(brd.Color.white)]));
+    try std.testing.expectEqual(16, @popCount(b.occupancy[@backingInt(brd.Color.black)]));
 
     try std.testing.expect(b.getBoard(.white, .knight) & @as(u64, 1 << 36) != 0);
     try std.testing.expect(b.getBoard(.black, .pawn) & @as(u64, 1 << 25) != 0);

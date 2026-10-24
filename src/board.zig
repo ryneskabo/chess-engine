@@ -1,20 +1,13 @@
 const std = @import("std");
 
 // Use single bit of data to indicate color
-pub const Color = enum(u1) { 
+pub const Color = enum(u1) {
     white,
     black,
 };
 
 // use 3 bits to indicate piece
-pub const Piece = enum(u3) {
-    pawn,
-    knight,
-    bishop,
-    rook,
-    queen,
-    king
-};
+pub const Piece = enum(u3) { pawn, knight, bishop, rook, queen, king };
 
 // 0-63 represent each square: 0 = a1, 1 = b1, ..., 63 = h8.
 pub const Square = u6;
@@ -37,7 +30,6 @@ pub const castling_mask: [64]CastlingRights = blk: {
     break :blk m;
 };
 
-
 pub const Board = struct {
     pieces: [2][6]u64, // [color][piece]
     occupancy: [2]u64, // [color], helps when generating moves, so you don't have to compute from all 12 boards each time.
@@ -48,25 +40,25 @@ pub const Board = struct {
     fullmove_number: u16, // tracks moves on both sides, not needed for calculation, but nice to have for printing
 
     pub fn getBoard(self: *const Board, color: Color, piece: Piece) u64 {
-        return self.pieces[@intFromEnum(color)][@intFromEnum(piece)];
+        return self.pieces[@backingInt(color)][@backingInt(piece)];
     }
 
     pub fn getMutableBoard(self: *Board, color: Color, piece: Piece) *u64 {
-        return &self.pieces[@intFromEnum(color)][@intFromEnum(piece)];
+        return &self.pieces[@backingInt(color)][@backingInt(piece)];
     }
 
     pub fn setPiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
         const board: *u64 = self.getMutableBoard(color, piece);
         const bit: u64 = (@as(u64, 1) << sq);
         board.* |= bit;
-        self.occupancy[@intFromEnum(color)] |= bit;
+        self.occupancy[@backingInt(color)] |= bit;
     }
 
     pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
         const board: *u64 = self.getMutableBoard(color, piece);
         const bit: u64 = (@as(u64, 1) << sq);
         board.* &= ~bit;
-        self.occupancy[@intFromEnum(color)] &= ~bit;
+        self.occupancy[@backingInt(color)] &= ~bit;
     }
 };
 
@@ -77,7 +69,7 @@ pub const empty: Board = .{
     .castling_rights = 0b0000,
     .en_passant = null,
     .fullmove_number = 1,
-    .halfmove_clock = 0, // DOUBLE CHECK THIS
+    .halfmove_clock = 0,
 };
 
 test "set-piece-test" {
@@ -95,7 +87,7 @@ test "set-piece-test" {
         }
     }
 
-    try std.testing.expectEqual(board.occupancy[1], 0);
+    try std.testing.expectEqual(board.occupancy[@backingInt(Color.black)], 0);
 }
 
 test "remove-piece-test" {
@@ -112,12 +104,12 @@ test "remove-piece-test" {
         }
     }
 
-    try std.testing.expectEqual(board.occupancy[1], 0);
+    try std.testing.expectEqual(board.occupancy[@backingInt(Color.black)], 0);
 
     board.removePiece(.white, .knight, 28);
     // Make sure piece is gone
     try std.testing.expectEqual(board.getBoard(.white, .knight), 0);
-    try std.testing.expectEqual(board.occupancy[0], 0);
+    try std.testing.expectEqual(board.occupancy[@backingInt(Color.white)], 0);
 
     // Check side effects
     inline for (std.enums.values(Color)) |color| {
@@ -128,5 +120,5 @@ test "remove-piece-test" {
         }
     }
 
-    try std.testing.expectEqual(board.occupancy[1], 0);
+    try std.testing.expectEqual(board.occupancy[@backingInt(Color.black)], 0);
 }
