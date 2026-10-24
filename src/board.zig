@@ -62,8 +62,6 @@ pub const Board = struct {
         self.occupancy[@intFromEnum(color)] |= bit;
     }
 
-    // TODO: Add matching removePiece procedure to remove piece from square
-    // pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void
     pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
         const board: *u64 = self.getMutableBoard(color, piece);
         const bit: u64 = (@as(u64, 1) << sq);
