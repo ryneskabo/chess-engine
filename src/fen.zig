@@ -3,6 +3,7 @@ const brd = @import("board.zig");
 
 pub const InvalidFen = error{ InvalidNumberOfFields, InvalidPiecePlacement, InvalidSideToMove, InvalidCastlingAbility, InvalidEnPassantSquare, InvalidHalfmoveClock, InvalidFullmoveCounter };
 
+/// Piece Placement field is a '/' delimited field, starting from rank 8, file a, and going down the board.
 fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
     var ranks = std.mem.splitScalar(u8, pieces, '/');
     var rank_count: u8 = 0;
@@ -14,13 +15,13 @@ fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
         for (rank) |c| {
             if (c >= '1' and c <= '8') {
                 current_file += c - '0';
-                if (current_file > 8) return InvalidFen.InvalidPiecePlacement;
+                if (current_file > 8) return InvalidFen.InvalidPiecePlacement; // rank is too long
                 continue;
             }
 
-            if (current_file >= 8) return InvalidFen.InvalidPiecePlacement;
+            if (current_file >= 8) return InvalidFen.InvalidPiecePlacement; // means that there is another item in the rank, but rank is already full.
 
-            const square: brd.Square = @intCast(current_rank * 8 + current_file);
+            const square: brd.Square = @intCast(current_rank * 8 + current_file); // should be safe, as current_file and current_rank are at most 7
             switch (c) {
                 'P' => board.setPiece(.white, .pawn, square),
                 'p' => board.setPiece(.black, .pawn, square),
@@ -38,12 +39,13 @@ fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
             }
             current_file += 1;
         }
-        rank_count += 1;
         if (current_file != 8) return InvalidFen.InvalidPiecePlacement;
+        rank_count += 1; // move to next rank
     }
-    if (rank_count != 8) return InvalidFen.InvalidPiecePlacement;
+    if (rank_count != 8) return InvalidFen.InvalidPiecePlacement; // incorrect amount of ranks
 }
 
+/// Should only have 'w' or 'b'
 fn parseSideToMove(board: *brd.Board, side: []const u8) InvalidFen!void {
     if (side.len != 1) return InvalidFen.InvalidSideToMove;
 
@@ -54,13 +56,12 @@ fn parseSideToMove(board: *brd.Board, side: []const u8) InvalidFen!void {
     }
 }
 
+/// Castling ability can be "-" or a series of K, k, Q, q. Currently allows duplicate letters.
 fn parseCastlingAbility(board: *brd.Board, castling_ability: []const u8) InvalidFen!void {
     if (castling_ability.len == 0) return InvalidFen.InvalidCastlingAbility;
 
     // Neither side has castling rights
-    if (std.mem.eql(u8, castling_ability, "-")) {
-        return; // Already 0b0000
-    }
+    if (std.mem.eql(u8, castling_ability, "-")) return; // Already 0b0000
 
     for (castling_ability) |right| {
         switch (right) {
@@ -75,9 +76,7 @@ fn parseCastlingAbility(board: *brd.Board, castling_ability: []const u8) Invalid
 
 /// Square can be "-" if en passant is not available or in algebraic notation e.g. f6. Rank must be 3 or 6.
 fn parseEnPassantSquare(board: *brd.Board, en_passant_square: []const u8) InvalidFen!void {
-    if (std.mem.eql(u8, en_passant_square, "-")) {
-        return; // Already null
-    }
+    if (std.mem.eql(u8, en_passant_square, "-")) return; // Already null
 
     if (en_passant_square.len != 2) return InvalidFen.InvalidEnPassantSquare;
 
