@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const brd = @import("board.zig");
 
 pub const InvalidFen = error{ InvalidNumberOfFields, InvalidPiecePlacement, InvalidSideToMove, InvalidCastlingAbility, InvalidEnPassantSquare, InvalidHalfmoveClock, InvalidFullmoveCounter };
