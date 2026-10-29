@@ -1,0 +1,20 @@
+// zellij --session sidelines --new-session-with-layout ./dev.kdl
+
+layout {
+    tab name="code" cwd="src" {
+        pane split_direction="vertical" {
+            pane command="nvim" {
+                args "."
+            }
+        }
+    }
+    tab name="cmd" {
+        pane split_direction="vertical" {
+            pane name="term"
+            pane {
+                name "lazygit"
+                command "lazygit"
+            }
+        }
+    }
+}
