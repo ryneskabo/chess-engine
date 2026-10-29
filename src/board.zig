@@ -60,6 +60,31 @@ pub const Board = struct {
         board.* &= ~bit;
         self.occupancy[@backingInt(color)] &= ~bit;
     }
+
+    pub const PieceOnSquare = struct { color: Color, piece: Piece };
+
+    pub fn pieceAt(self: *const Board, sq: Square) ?PieceOnSquare {
+        const bit: u64 = (@as(u64, 1) << sq);
+        const occupied_by_white: bool = bit & self.occupancy[@backingInt(Color.white)] != 0;
+        const occupied_by_black: bool = bit & self.occupancy[@backingInt(Color.black)] != 0;
+
+        // Check if square is occupied at all
+        if (!(occupied_by_white or occupied_by_black)) {
+            return null;
+        }
+
+        std.debug.assert(!(occupied_by_white and occupied_by_black));
+
+        const color: Color = if (occupied_by_white) .white else .black;
+
+        inline for (std.enums.values(Piece)) |piece| {
+            if (bit & self.getBoard(color, piece) != 0) {
+                return .{ .color = color, .piece = piece };
+            }
+        }
+
+        @panic("occupancy out of sync with pieces board");
+    }
 };
 
 pub const empty: Board = .{
@@ -121,4 +146,74 @@ test "remove-piece-test" {
     }
 
     try std.testing.expectEqual(board.occupancy[@backingInt(Color.black)], 0);
+}
+
+test "piece at" {
+    var board: Board = empty;
+    try std.testing.expectEqual(null, board.pieceAt(28));
+
+    board.setPiece(.white, .knight, 28);
+
+    try std.testing.expectEqual(Board.PieceOnSquare {
+        .color = .white, .piece = .knight,
+    }, board.pieceAt(28));
+}
+
+test "piece at on a populated board" {
+    var board: Board = empty;
+    board.setPiece(.black, .king, 60);
+    board.setPiece(.white, .knight, 28);
+
+    // Empty square, with a black piece elsewhere on the board
+    try std.testing.expectEqual(null, board.pieceAt(0));
+}
+
+test "piece at returns a black piece" {
+    var board: Board = empty;
+    board.setPiece(.black, .queen, 59);
+
+    try std.testing.expectEqual(Board.PieceOnSquare{
+        .color = .black,
+        .piece = .queen,
+    }, board.pieceAt(59));
+}
+
+test "piece at finds every piece type for both colors" {
+    for (std.enums.values(Color)) |color| {
+        var board: Board = empty;
+
+        // Place one of each piece type on its own square
+        for (std.enums.values(Piece), 0..) |piece, i| {
+            const sq: Square = @intCast(8 * i + 3);
+            board.setPiece(color, piece, sq);
+        }
+
+        // Check each one comes back as the same color and type
+        for (std.enums.values(Piece), 0..) |piece, i| {
+            const sq: Square = @intCast(8 * i + 3);
+            try std.testing.expectEqual(Board.PieceOnSquare{
+                .color = color,
+                .piece = piece,
+            }, board.pieceAt(sq));
+        }
+    }
+}
+
+test "piece at is null after removePiece" {
+    var board: Board = empty;
+    board.setPiece(.white, .knight, 28);
+    board.setPiece(.black, .king, 60);
+
+    board.removePiece(.white, .knight, 28);
+
+    // The removed square is empty and the other piece is untouched
+    try std.testing.expectEqual(null, board.pieceAt(28));
+    try std.testing.expectEqual(Board.PieceOnSquare{
+        .color = .black,
+        .piece = .king,
+    }, board.pieceAt(60));
+
+    // Both bitboards for the removed piece are cleared
+    try std.testing.expectEqual(@as(u64, 0), board.getBoard(.white, .knight));
+    try std.testing.expectEqual(@as(u64, 0), board.occupancy[@backingInt(Color.white)]);
 }
