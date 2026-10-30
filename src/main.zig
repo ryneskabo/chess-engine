@@ -3,6 +3,7 @@ const Io = std.Io;
 
 const fen = @import("fen.zig");
 const brd = @import("board.zig");
+const attacks = @import("attacks.zig");
 
 pub fn main() !void {
     const board: brd.Board = try fen.parseFen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
