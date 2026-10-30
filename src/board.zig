@@ -2,12 +2,12 @@ const std = @import("std");
 
 // Use single bit of data to indicate color
 pub const Color = enum(u1) {
-    white,
-    black,
+    white = 0,
+    black = 1,
 };
 
 // use 3 bits to indicate piece
-pub const Piece = enum(u3) { pawn, knight, bishop, rook, queen, king };
+pub const Piece = enum(u3) { pawn = 0, knight = 1, bishop = 2, rook = 3, queen = 4, king = 5 };
 
 // 0-63 represent each square: 0 = a1, 1 = b1, ..., 63 = h8.
 pub const Square = u6;
@@ -154,8 +154,9 @@ test "piece at" {
 
     board.setPiece(.white, .knight, 28);
 
-    try std.testing.expectEqual(Board.PieceOnSquare {
-        .color = .white, .piece = .knight,
+    try std.testing.expectEqual(Board.PieceOnSquare{
+        .color = .white,
+        .piece = .knight,
     }, board.pieceAt(28));
 }
 
