@@ -1,6 +1,7 @@
 const std = @import("std");
 const fen = @import("fen.zig");
 const brd = @import("board.zig");
+const att = @import("attacks.zig");
 
 const Board = brd.Board;
 const Color = brd.Color;
@@ -170,6 +171,116 @@ pub fn doublePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveLis
                 .to = pawn_square,
                 .flags = .double_pawn_push,
             });
+        }
+    }
+}
+
+const pawn_attack_mask = att.pawn_attacks;
+pub fn pawnCapturesToMoves(board: *const Board, color: Color, move_list: *MoveList) void {
+    var pawns = board.getBoard(color, .pawn);
+    const occupied_by_opponent = if (color == .white) board.occupancy[@backingInt(Color.black)] else board.occupancy[@backingInt(Color.white)]; // pawn captures only legal if occupied by opponent
+
+    if (color == .white) {
+        while (pawns != 0) : (pawns &= pawns - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(pawns));
+            // compare attacks on pawn_square with pawn attack mask
+            const pawn_attacks = pawn_attack_mask[@backingInt(color)][pawn_square];
+
+            // check if attacking en passant square
+            if (board.en_passant) |ep_sq| {
+                if (pawn_attacks & squareBit(ep_sq) & rank_6 != 0) {
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = ep_sq,
+                        .flags = .en_passant_capture,
+                    });
+                }
+            }
+
+            var opponents_attacked = pawn_attacks & occupied_by_opponent;
+            while (opponents_attacked != 0) : (opponents_attacked &= opponents_attacked - 1) {
+                const attack_square: brd.Square = @intCast(@ctz(opponents_attacked));
+                if (attack_square >= 56) {
+                    // emit four promotion capture moves, one per type
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .knight_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .bishop_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .rook_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .queen_promotion_capture,
+                    });
+                    continue;
+                }
+                move_list.add(.{
+                    .from = pawn_square,
+                    .to = attack_square,
+                    .flags = .capture,
+                });
+            }
+        }
+    } else {
+        while (pawns != 0) : (pawns &= pawns - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(pawns));
+            // compare attacks on pawn_square with pawn attack mask
+            const pawn_attacks = pawn_attack_mask[@backingInt(color)][pawn_square];
+
+            // check if attacking en passant square
+            if (board.en_passant) |ep_sq| {
+                if (pawn_attacks & squareBit(ep_sq) & rank_3 != 0) {
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = ep_sq,
+                        .flags = .en_passant_capture,
+                    });
+                }
+            }
+
+            var opponents_attacked = pawn_attacks & occupied_by_opponent;
+            while (opponents_attacked != 0) : (opponents_attacked &= opponents_attacked - 1) {
+                const attack_square: brd.Square = @intCast(@ctz(opponents_attacked));
+                if (attack_square <= 7) {
+                    // emit four promotion capture moves, one per type
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .knight_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .bishop_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .rook_promotion_capture,
+                    });
+                    move_list.add(.{
+                        .from = pawn_square,
+                        .to = attack_square,
+                        .flags = .queen_promotion_capture,
+                    });
+                    continue;
+                }
+                move_list.add(.{
+                    .from = pawn_square,
+                    .to = attack_square,
+                    .flags = .capture,
+                });
+            }
         }
     }
 }
@@ -515,5 +626,177 @@ test "empty bitboard adds no pawn push moves" {
     doublePawnPushesToMoves(0, .white, &list);
     singlePawnPushesToMoves(0, .black, &list);
     doublePawnPushesToMoves(0, .black, &list);
+    try std.testing.expectEqual(@as(u16, 0), list.count);
+}
+
+test "starting position has no pawn captures for either side" {
+    const b = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    var list = MoveList{};
+
+    pawnCapturesToMoves(&b, .white, &list);
+    try std.testing.expectEqual(@as(u16, 0), list.count);
+
+    pawnCapturesToMoves(&b, .black, &list);
+    try std.testing.expectEqual(@as(u16, 0), list.count);
+}
+
+test "white pawn captures enemy pieces on both diagonals" {
+    // White pawn on e4 (28), black pawns on d5 (35) and f5 (37)
+    const b = try fen.parseFen("4k3/8/8/3p1p2/4P3/8/8/4K3 w - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 2), list.count);
+    try std.testing.expectEqual(Move{ .from = 28, .to = 35, .flags = .capture }, list.moves[0]);
+    try std.testing.expectEqual(Move{ .from = 28, .to = 37, .flags = .capture }, list.moves[1]);
+}
+
+test "black pawn captures enemy pieces on both diagonals" {
+    // Black pawn on e5 (36), white pawns on d4 (27) and f4 (29)
+    const b = try fen.parseFen("4k3/8/8/4p3/3P1P2/8/8/4K3 b - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .black, &list);
+
+    try std.testing.expectEqual(@as(u16, 2), list.count);
+    try std.testing.expectEqual(Move{ .from = 36, .to = 27, .flags = .capture }, list.moves[0]);
+    try std.testing.expectEqual(Move{ .from = 36, .to = 29, .flags = .capture }, list.moves[1]);
+}
+
+test "pawns cannot capture friendly pieces" {
+    // White pawn on e4 (28) with white knights on d5 (35) and f5 (37)
+    const b = try fen.parseFen("4k3/8/8/3N1N2/4P3/8/8/4K3 w - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 0), list.count);
+}
+
+test "edge-file pawn captures do not wrap around the board" {
+    // White pawns on a4 (24) and h4 (31), black pawns on b5 (33), g5 (38), a5 (32), h5 (39)
+    const b = try fen.parseFen("4k3/8/8/pp4pp/P6P/8/8/4K3 w - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    // a4 only captures b5 (24 -> 33); h4 only captures g5 (31 -> 38)
+    try std.testing.expectEqual(@as(u16, 2), list.count);
+    try std.testing.expectEqual(Move{ .from = 24, .to = 33, .flags = .capture }, list.moves[0]);
+    try std.testing.expectEqual(Move{ .from = 31, .to = 38, .flags = .capture }, list.moves[1]);
+}
+
+test "white pawn capture onto the eighth rank produces 4 capture-promotion moves" {
+    // White pawn on e7 (52), black rook on d8 (59)
+    const b = try fen.parseFen("3r3k/4P3/8/8/8/8/8/4K3 w - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 4), list.count);
+
+    var seen: [6]bool = @splat(false);
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expectEqual(@as(brd.Square, 52), m.from); // e7
+        try std.testing.expectEqual(@as(brd.Square, 59), m.to); // d8
+        try std.testing.expect(m.flags.isCapture());
+        try std.testing.expect(m.flags.isPromotion());
+
+        const promoted = m.flags.piecePromoted() orelse return error.TestUnexpectedResult;
+        seen[@backingInt(promoted)] = true;
+    }
+
+    try std.testing.expect(seen[@backingInt(Piece.knight)]);
+    try std.testing.expect(seen[@backingInt(Piece.bishop)]);
+    try std.testing.expect(seen[@backingInt(Piece.rook)]);
+    try std.testing.expect(seen[@backingInt(Piece.queen)]);
+}
+
+test "black pawn capture onto the first rank produces 4 capture-promotion moves" {
+    // Black pawn on e2 (12), white rook on f1 (5)
+    const b = try fen.parseFen("4k3/8/8/8/8/8/4p3/K4R2 b - - 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .black, &list);
+
+    try std.testing.expectEqual(@as(u16, 4), list.count);
+
+    var seen: [6]bool = @splat(false);
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expectEqual(@as(brd.Square, 12), m.from); // e2
+        try std.testing.expectEqual(@as(brd.Square, 5), m.to); // f1
+        try std.testing.expect(m.flags.isCapture());
+        try std.testing.expect(m.flags.isPromotion());
+
+        const promoted = m.flags.piecePromoted() orelse return error.TestUnexpectedResult;
+        seen[@backingInt(promoted)] = true;
+    }
+
+    try std.testing.expect(seen[@backingInt(Piece.knight)]);
+    try std.testing.expect(seen[@backingInt(Piece.bishop)]);
+    try std.testing.expect(seen[@backingInt(Piece.rook)]);
+    try std.testing.expect(seen[@backingInt(Piece.queen)]);
+}
+
+test "white en passant capture produces en_passant_capture move" {
+    // White pawn on e5 (36), black pawn just played d7-d5 so en passant target is d6 (43)
+    const b = try fen.parseFen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 1), list.count);
+    try std.testing.expectEqual(Move{
+        .from = 36,
+        .to = 43,
+        .flags = .en_passant_capture,
+    }, list.moves[0]);
+    try std.testing.expect(list.moves[0].flags.isCapture());
+    try std.testing.expect(!list.moves[0].flags.isPromotion());
+}
+
+test "black en passant capture produces en_passant_capture move" {
+    // Black pawn on d4 (27), white pawn just played e2-e4 so en passant target is e3 (20)
+    const b = try fen.parseFen("4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .black, &list);
+
+    try std.testing.expectEqual(@as(u16, 1), list.count);
+    try std.testing.expectEqual(Move{
+        .from = 27,
+        .to = 20,
+        .flags = .en_passant_capture,
+    }, list.moves[0]);
+    try std.testing.expect(list.moves[0].flags.isCapture());
+    try std.testing.expect(!list.moves[0].flags.isPromotion());
+}
+
+test "two pawns able to capture the same en passant square" {
+    // White pawns on d5 (35) and f5 (37), en passant target on e6 (44)
+    const b = try fen.parseFen("4k3/8/8/3PpP2/8/8/8/4K3 w - e6 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 2), list.count);
+    try std.testing.expectEqual(Move{ .from = 35, .to = 44, .flags = .en_passant_capture }, list.moves[0]);
+    try std.testing.expectEqual(Move{ .from = 37, .to = 44, .flags = .en_passant_capture }, list.moves[1]);
+}
+
+test "cannot en passant capture own side" {
+    // White double-pushed e2-e4 setting ep = e3 (20, rank 3).
+    // Friendly white pawns on d2 (11) and f2 (13) attack e3, but must not en-passant their own pawn.
+    const white_ep_board = try fen.parseFen("4k3/8/8/8/4P3/8/3P1P2/4K3 w - e3 0 1");
+    var white_list = MoveList{};
+    pawnCapturesToMoves(&white_ep_board, .white, &white_list);
+    try std.testing.expectEqual(@as(u16, 0), white_list.count);
+
+    // Black double-pushed e7-e5 setting ep = e6 (44, rank 6).
+    // Friendly black pawns on d7 (51) and f7 (53) attack e6, but must not en-passant their own pawn.
+    const black_ep_board = try fen.parseFen("4k3/3p1p2/8/4p3/8/8/8/4K3 b - e6 0 1");
+    var black_list = MoveList{};
+    pawnCapturesToMoves(&black_ep_board, .black, &black_list);
+    try std.testing.expectEqual(@as(u16, 0), black_list.count);
+}
+
+test "en passant square out of reach produces no en passant move" {
+    // White pawn on a5 (32), en passant square is e6 (44)
+    const b = try fen.parseFen("4k3/8/8/P3p3/8/8/8/4K3 w - e6 0 1");
+    var list = MoveList{};
+    pawnCapturesToMoves(&b, .white, &list);
+
     try std.testing.expectEqual(@as(u16, 0), list.count);
 }
