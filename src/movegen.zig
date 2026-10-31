@@ -80,6 +80,100 @@ pub const MoveList = struct {
     }
 };
 
+pub fn singlePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveList) void {
+    var bb = bit_board;
+    if (color == .white) {
+        while (bb != 0) : (bb &= bb - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(bb));
+            if (pawn_square >= 56) {
+                // emit four promotion moves, one per type
+                move_list.add(.{
+                    .from = pawn_square - 8,
+                    .to = pawn_square,
+                    .flags = .knight_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square - 8,
+                    .to = pawn_square,
+                    .flags = .bishop_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square - 8,
+                    .to = pawn_square,
+                    .flags = .rook_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square - 8,
+                    .to = pawn_square,
+                    .flags = .queen_promotion,
+                });
+                continue;
+            }
+            move_list.add(.{
+                .from = pawn_square - 8,
+                .to = pawn_square,
+                .flags = .quiet_move,
+            });
+        }
+    } else {
+        while (bb != 0) : (bb &= bb - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(bb));
+            if (pawn_square <= 7) {
+                // emit four promotion moves, one per type
+                move_list.add(.{
+                    .from = pawn_square + 8,
+                    .to = pawn_square,
+                    .flags = .knight_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square + 8,
+                    .to = pawn_square,
+                    .flags = .bishop_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square + 8,
+                    .to = pawn_square,
+                    .flags = .rook_promotion,
+                });
+                move_list.add(.{
+                    .from = pawn_square + 8,
+                    .to = pawn_square,
+                    .flags = .queen_promotion,
+                });
+                continue;
+            }
+            move_list.add(.{
+                .from = pawn_square + 8,
+                .to = pawn_square,
+                .flags = .quiet_move,
+            });
+        }
+    }
+}
+
+pub fn doublePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveList) void {
+    var bb = bit_board;
+    if (color == .white) {
+        while (bb != 0) : (bb &= bb - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(bb));
+            move_list.add(.{
+                .from = pawn_square - 16,
+                .to = pawn_square,
+                .flags = .double_pawn_push,
+            });
+        }
+    } else {
+        while (bb != 0) : (bb &= bb - 1) {
+            const pawn_square: brd.Square = @intCast(@ctz(bb));
+            move_list.add(.{
+                .from = pawn_square + 16,
+                .to = pawn_square,
+                .flags = .double_pawn_push,
+            });
+        }
+    }
+}
+
 const squareBit = brd.squareBit;
 
 test "pushes from the starting position" {
@@ -246,7 +340,7 @@ test "MoveFlags capture and promotion helpers" {
 
 test "MoveList starts empty and adds three moves" {
     var list = MoveList{};
-    try std.testing.expectEqual(@as(u8, 0), list.count);
+    try std.testing.expectEqual(@as(u16, 0), list.count);
 
     const m1 = Move{ .from = 12, .to = 28, .flags = .double_pawn_push }; // e2e4
     const m2 = Move{ .from = 6, .to = 21, .flags = .quiet_move }; // g1f3
@@ -256,8 +350,170 @@ test "MoveList starts empty and adds three moves" {
     list.add(m2);
     list.add(m3);
 
-    try std.testing.expectEqual(@as(u8, 3), list.count);
+    try std.testing.expectEqual(@as(u16, 3), list.count);
     try std.testing.expectEqual(m1, list.moves[0]);
     try std.testing.expectEqual(m2, list.moves[1]);
     try std.testing.expectEqual(m3, list.moves[2]);
+}
+
+test "starting position white pawn pushes produce 16 moves (8 single, 8 double) and no captures" {
+    const b = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const pushes = generatePawnPushes(&b, .white);
+
+    var list = MoveList{};
+    singlePawnPushesToMoves(pushes.single, .white, &list);
+    try std.testing.expectEqual(@as(u16, 8), list.count);
+
+    doublePawnPushesToMoves(pushes.double, .white, &list);
+    try std.testing.expectEqual(@as(u16, 16), list.count);
+
+    var single_count: usize = 0;
+    var double_count: usize = 0;
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expect(!m.flags.isCapture());
+        try std.testing.expect(!m.flags.isPromotion());
+        if (m.flags == .quiet_move) {
+            single_count += 1;
+            try std.testing.expectEqual(m.from + 8, m.to);
+        } else if (m.flags == .double_pawn_push) {
+            double_count += 1;
+            try std.testing.expectEqual(m.from + 16, m.to);
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 8), single_count);
+    try std.testing.expectEqual(@as(usize, 8), double_count);
+}
+
+test "starting position black pawn pushes produce 16 moves (8 single, 8 double) and no captures" {
+    const b = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+    const pushes = generatePawnPushes(&b, .black);
+
+    var list = MoveList{};
+    singlePawnPushesToMoves(pushes.single, .black, &list);
+    try std.testing.expectEqual(@as(u16, 8), list.count);
+
+    doublePawnPushesToMoves(pushes.double, .black, &list);
+    try std.testing.expectEqual(@as(u16, 16), list.count);
+
+    var single_count: usize = 0;
+    var double_count: usize = 0;
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expect(!m.flags.isCapture());
+        try std.testing.expect(!m.flags.isPromotion());
+        if (m.flags == .quiet_move) {
+            single_count += 1;
+            try std.testing.expectEqual(m.to + 8, m.from);
+        } else if (m.flags == .double_pawn_push) {
+            double_count += 1;
+            try std.testing.expectEqual(m.to + 16, m.from);
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 8), single_count);
+    try std.testing.expectEqual(@as(usize, 8), double_count);
+}
+
+test "white pawn on e7 with e8 empty produces 4 distinct promotion moves" {
+    const b = try fen.parseFen("8/4P3/8/8/8/8/8/K6k w - - 0 1");
+    const pushes = generatePawnPushes(&b, .white);
+
+    var list = MoveList{};
+    singlePawnPushesToMoves(pushes.single, .white, &list);
+    doublePawnPushesToMoves(pushes.double, .white, &list);
+
+    try std.testing.expectEqual(@as(u16, 4), list.count);
+
+    var seen: [6]bool = @splat(false);
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expectEqual(@as(brd.Square, 52), m.from); // e7
+        try std.testing.expectEqual(@as(brd.Square, 60), m.to); // e8
+        try std.testing.expect(m.flags.isPromotion());
+        try std.testing.expect(!m.flags.isCapture());
+
+        const promoted = m.flags.piecePromoted() orelse return error.TestUnexpectedResult;
+        seen[@backingInt(promoted)] = true;
+    }
+
+    try std.testing.expect(seen[@backingInt(Piece.knight)]);
+    try std.testing.expect(seen[@backingInt(Piece.bishop)]);
+    try std.testing.expect(seen[@backingInt(Piece.rook)]);
+    try std.testing.expect(seen[@backingInt(Piece.queen)]);
+}
+
+test "black pawn on e2 with e1 empty produces 4 distinct promotion moves" {
+    const b = try fen.parseFen("K6k/8/8/8/8/8/4p3/8 b - - 0 1");
+    const pushes = generatePawnPushes(&b, .black);
+
+    var list = MoveList{};
+    singlePawnPushesToMoves(pushes.single, .black, &list);
+    doublePawnPushesToMoves(pushes.double, .black, &list);
+
+    try std.testing.expectEqual(@as(u16, 4), list.count);
+
+    var seen: [6]bool = @splat(false);
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expectEqual(@as(brd.Square, 12), m.from); // e2
+        try std.testing.expectEqual(@as(brd.Square, 4), m.to); // e1
+        try std.testing.expect(m.flags.isPromotion());
+        try std.testing.expect(!m.flags.isCapture());
+
+        const promoted = m.flags.piecePromoted() orelse return error.TestUnexpectedResult;
+        seen[@backingInt(promoted)] = true;
+    }
+
+    try std.testing.expect(seen[@backingInt(Piece.knight)]);
+    try std.testing.expect(seen[@backingInt(Piece.bishop)]);
+    try std.testing.expect(seen[@backingInt(Piece.rook)]);
+    try std.testing.expect(seen[@backingInt(Piece.queen)]);
+}
+
+test "double push move carries double_pawn_push flag and expected squares" {
+    // White e2 (12) -> e4 (28)
+    const bw = try fen.parseFen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    const pw = generatePawnPushes(&bw, .white);
+    var white_list = MoveList{};
+    doublePawnPushesToMoves(pw.double, .white, &white_list);
+
+    try std.testing.expectEqual(@as(u16, 1), white_list.count);
+    try std.testing.expectEqual(@as(brd.Square, 12), white_list.moves[0].from);
+    try std.testing.expectEqual(@as(brd.Square, 28), white_list.moves[0].to);
+    try std.testing.expectEqual(MoveFlags.double_pawn_push, white_list.moves[0].flags);
+
+    // Black e7 (52) -> e5 (36)
+    const bb = try fen.parseFen("4k3/4p3/8/8/8/8/8/4K3 b - - 0 1");
+    const pb = generatePawnPushes(&bb, .black);
+    var black_list = MoveList{};
+    doublePawnPushesToMoves(pb.double, .black, &black_list);
+
+    try std.testing.expectEqual(@as(u16, 1), black_list.count);
+    try std.testing.expectEqual(@as(brd.Square, 52), black_list.moves[0].from);
+    try std.testing.expectEqual(@as(brd.Square, 36), black_list.moves[0].to);
+    try std.testing.expectEqual(MoveFlags.double_pawn_push, black_list.moves[0].flags);
+}
+
+test "mixed quiet pushes and promotions on the same board" {
+    // White pawn on a2 (8) and e7 (52)
+    const b = try fen.parseFen("8/4P3/8/8/8/8/P7/K6k w - - 0 1");
+    const pushes = generatePawnPushes(&b, .white);
+
+    var list = MoveList{};
+    singlePawnPushesToMoves(pushes.single, .white, &list);
+    doublePawnPushesToMoves(pushes.double, .white, &list);
+
+    // a2->a3 (1 quiet) + e7->e8 (4 promotions) + a2->a4 (1 double push) = 6 moves
+    try std.testing.expectEqual(@as(u16, 6), list.count);
+    try std.testing.expectEqual(Move{ .from = 8, .to = 16, .flags = .quiet_move }, list.moves[0]);
+    try std.testing.expectEqual(Move{ .from = 8, .to = 24, .flags = .double_pawn_push }, list.moves[5]);
+}
+
+test "empty bitboard adds no pawn push moves" {
+    var list = MoveList{};
+    singlePawnPushesToMoves(0, .white, &list);
+    doublePawnPushesToMoves(0, .white, &list);
+    singlePawnPushesToMoves(0, .black, &list);
+    doublePawnPushesToMoves(0, .black, &list);
+    try std.testing.expectEqual(@as(u16, 0), list.count);
 }
