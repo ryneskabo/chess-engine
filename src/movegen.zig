@@ -5,6 +5,7 @@ const brd = @import("board.zig");
 const Board = brd.Board;
 const Color = brd.Color;
 const Piece = brd.Piece;
+
 const rank_3: u64 = 0x0000000000FF0000;
 const rank_6: u64 = 0x0000FF0000000000;
 pub fn generatePawnPushes(board: *const Board, color: Color) struct { single: u64, double: u64 } {
@@ -22,6 +23,62 @@ pub fn generatePawnPushes(board: *const Board, color: Color) struct { single: u6
         return .{ .single = single_push, .double = double_push };
     }
 }
+
+/// bit 2 on means capture, bit 3 means promotion, 0 indexed from LSB
+pub const MoveFlags = enum(u4) {
+    quiet_move = 0b0000,
+    double_pawn_push = 0b0001,
+    kingside_castle = 0b0010,
+    queenside_castle = 0b0011,
+    capture = 0b0100,
+    en_passant_capture = 0b0101,
+    knight_promotion = 0b1000,
+    bishop_promotion = 0b1001,
+    rook_promotion = 0b1010,
+    queen_promotion = 0b1011,
+    knight_promotion_capture = 0b1100,
+    bishop_promotion_capture = 0b1101,
+    rook_promotion_capture = 0b1110,
+    queen_promotion_capture = 0b1111,
+
+    pub fn isPromotion(self: MoveFlags) bool {
+        return @backingInt(self) & @as(u4, 0b1000) != 0;
+    }
+
+    pub fn isCapture(self: MoveFlags) bool {
+        return @backingInt(self) & @as(u4, 0b0100) != 0;
+    }
+
+    pub fn piecePromoted(self: MoveFlags) ?Piece {
+        if (!self.isPromotion()) return null;
+
+        return switch (@backingInt(self) & @as(u4, 0b0011)) {
+            0b0000 => .knight,
+            0b0001 => .bishop,
+            0b0010 => .rook,
+            0b0011 => .queen,
+            else => unreachable, // verify this
+        };
+    }
+};
+
+pub const Move = packed struct(u16) {
+    from: brd.Square,
+    to: brd.Square,
+    flags: MoveFlags,
+};
+
+pub const MoveList = struct {
+    moves: [256]Move = undefined,
+    count: u16 = 0, // Avoiding overflow
+
+    pub fn add(self: *MoveList, move: Move) void {
+        std.debug.assert(self.count < self.moves.len);
+
+        self.moves[self.count] = move;
+        self.count += 1;
+    }
+};
 
 const squareBit = brd.squareBit;
 
@@ -100,4 +157,107 @@ test "pawn on the seventh rank pushes onto the last rank" {
     const p = generatePawnPushes(&b, .white);
     try std.testing.expectEqual(squareBit(60), p.single); // e8
     try std.testing.expectEqual(@as(u64, 0), p.double);
+}
+
+test "Move size is 2 bytes" {
+    try std.testing.expectEqual(@as(usize, 2), @sizeOf(Move));
+    try std.testing.expectEqual(@as(usize, 16), @bitSizeOf(Move));
+}
+
+test "Move round trip and packed bit layout" {
+    const m = Move{
+        .from = 12,
+        .to = 28,
+        .flags = .double_pawn_push,
+    };
+
+    try std.testing.expectEqual(@as(brd.Square, 12), m.from);
+    try std.testing.expectEqual(@as(brd.Square, 28), m.to);
+    try std.testing.expectEqual(MoveFlags.double_pawn_push, m.flags);
+
+    // Packed structs place the first field (from) in the lowest bits:
+    // bits 0..5 = from (12), bits 6..11 = to (28), bits 12..15 = flags (0b0001)
+    const raw: u16 = @bitCast(m);
+    const expected_raw: u16 = @as(u16, 12) | (@as(u16, 28) << 6) | (@as(u16, 0b0001) << 12);
+    try std.testing.expectEqual(expected_raw, raw);
+
+    const unpacked: Move = @bitCast(raw);
+    try std.testing.expectEqual(m, unpacked);
+}
+
+test "Move extremes for squares and flags" {
+    const min_move = Move{ .from = 0, .to = 0, .flags = .quiet_move };
+    try std.testing.expectEqual(@as(u16, 0), @as(u16, @bitCast(min_move)));
+    try std.testing.expectEqual(@as(brd.Square, 0), min_move.from);
+    try std.testing.expectEqual(@as(brd.Square, 0), min_move.to);
+    try std.testing.expectEqual(MoveFlags.quiet_move, min_move.flags);
+
+    const max_move = Move{ .from = 63, .to = 63, .flags = .queen_promotion_capture };
+    try std.testing.expectEqual(@as(u16, 0xFFFF), @as(u16, @bitCast(max_move)));
+    try std.testing.expectEqual(@as(brd.Square, 63), max_move.from);
+    try std.testing.expectEqual(@as(brd.Square, 63), max_move.to);
+    try std.testing.expectEqual(MoveFlags.queen_promotion_capture, max_move.flags);
+}
+
+test "MoveFlags capture and promotion helpers" {
+    try std.testing.expect(!MoveFlags.quiet_move.isCapture());
+    try std.testing.expect(!MoveFlags.quiet_move.isPromotion());
+    try std.testing.expectEqual(@as(?Piece, null), MoveFlags.quiet_move.piecePromoted());
+
+    try std.testing.expect(!MoveFlags.double_pawn_push.isCapture());
+    try std.testing.expect(!MoveFlags.kingside_castle.isCapture());
+    try std.testing.expect(!MoveFlags.queenside_castle.isCapture());
+
+    // Non-promotion captures
+    try std.testing.expect(MoveFlags.capture.isCapture());
+    try std.testing.expect(!MoveFlags.capture.isPromotion());
+    try std.testing.expectEqual(@as(?Piece, null), MoveFlags.capture.piecePromoted());
+
+    try std.testing.expect(MoveFlags.en_passant_capture.isCapture());
+    try std.testing.expect(!MoveFlags.en_passant_capture.isPromotion());
+    try std.testing.expectEqual(@as(?Piece, null), MoveFlags.en_passant_capture.piecePromoted());
+
+    // Quiet promotions
+    const quiet_promos = [_]struct { flag: MoveFlags, piece: Piece }{
+        .{ .flag = .knight_promotion, .piece = .knight },
+        .{ .flag = .bishop_promotion, .piece = .bishop },
+        .{ .flag = .rook_promotion, .piece = .rook },
+        .{ .flag = .queen_promotion, .piece = .queen },
+    };
+    for (quiet_promos) |case| {
+        try std.testing.expect(case.flag.isPromotion());
+        try std.testing.expect(!case.flag.isCapture());
+        try std.testing.expectEqual(@as(?Piece, case.piece), case.flag.piecePromoted());
+    }
+
+    // Capture promotions
+    const capture_promos = [_]struct { flag: MoveFlags, piece: Piece }{
+        .{ .flag = .knight_promotion_capture, .piece = .knight },
+        .{ .flag = .bishop_promotion_capture, .piece = .bishop },
+        .{ .flag = .rook_promotion_capture, .piece = .rook },
+        .{ .flag = .queen_promotion_capture, .piece = .queen },
+    };
+    for (capture_promos) |case| {
+        try std.testing.expect(case.flag.isPromotion());
+        try std.testing.expect(case.flag.isCapture());
+        try std.testing.expectEqual(@as(?Piece, case.piece), case.flag.piecePromoted());
+    }
+}
+
+test "MoveList starts empty and adds three moves" {
+    var list = MoveList{};
+    try std.testing.expectEqual(@as(u8, 0), list.count);
+
+    const m1 = Move{ .from = 12, .to = 28, .flags = .double_pawn_push }; // e2e4
+    const m2 = Move{ .from = 6, .to = 21, .flags = .quiet_move }; // g1f3
+    const m3 = Move{ .from = 28, .to = 35, .flags = .capture }; // e4xd5
+
+    list.add(m1);
+    list.add(m2);
+    list.add(m3);
+
+    try std.testing.expectEqual(@as(u8, 3), list.count);
+    try std.testing.expectEqual(m1, list.moves[0]);
+    try std.testing.expectEqual(m2, list.moves[1]);
+    try std.testing.expectEqual(m3, list.moves[2]);
 }
