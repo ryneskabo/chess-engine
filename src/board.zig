@@ -49,14 +49,14 @@ pub const Board = struct {
 
     pub fn setPiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
         const board: *u64 = self.getMutableBoard(color, piece);
-        const bit: u64 = (@as(u64, 1) << sq);
+        const bit: u64 = squareBit(sq);
         board.* |= bit;
         self.occupancy[@backingInt(color)] |= bit;
     }
 
     pub fn removePiece(self: *Board, color: Color, piece: Piece, sq: Square) void {
         const board: *u64 = self.getMutableBoard(color, piece);
-        const bit: u64 = (@as(u64, 1) << sq);
+        const bit: u64 = squareBit(sq);
         board.* &= ~bit;
         self.occupancy[@backingInt(color)] &= ~bit;
     }
@@ -64,7 +64,7 @@ pub const Board = struct {
     pub const PieceOnSquare = struct { color: Color, piece: Piece };
 
     pub fn pieceAt(self: *const Board, sq: Square) ?PieceOnSquare {
-        const bit: u64 = (@as(u64, 1) << sq);
+        const bit: u64 = squareBit(sq);
         const occupied_by_white: bool = bit & self.occupancy[@backingInt(Color.white)] != 0;
         const occupied_by_black: bool = bit & self.occupancy[@backingInt(Color.black)] != 0;
 
@@ -97,11 +97,15 @@ pub const empty: Board = .{
     .halfmove_clock = 0,
 };
 
+pub fn squareBit(sq: Square) u64 {
+    return @as(u64, 1) << sq;
+}
+
 test "set-piece-test" {
     var board: Board = empty;
     board.setPiece(.white, .knight, 28);
-    try std.testing.expectEqual(board.getBoard(.white, .knight), 1 << 28);
-    try std.testing.expectEqual(board.occupancy[0], 1 << 28);
+    try std.testing.expectEqual(board.getBoard(.white, .knight), squareBit(28));
+    try std.testing.expectEqual(board.occupancy[0], squareBit(28));
 
     // Check side effects
     inline for (std.enums.values(Color)) |color| {
@@ -118,8 +122,8 @@ test "set-piece-test" {
 test "remove-piece-test" {
     var board: Board = empty;
     board.setPiece(.white, .knight, 28);
-    try std.testing.expectEqual(board.getBoard(.white, .knight), 1 << 28);
-    try std.testing.expectEqual(board.occupancy[0], 1 << 28);
+    try std.testing.expectEqual(board.getBoard(.white, .knight), squareBit(28));
+    try std.testing.expectEqual(board.occupancy[0], squareBit(28));
 
     inline for (std.enums.values(Color)) |color| {
         inline for (std.enums.values(Piece)) |piece| {

@@ -143,9 +143,9 @@ test "parses starting position" {
     try std.testing.expectEqual(@as(u64, 0x42), b.getBoard(.white, .knight));
 
     // White king
-    try std.testing.expectEqual(@as(u64, 1 << 4), b.getBoard(.white, .king));
+    try std.testing.expectEqual(brd.squareBit(4), b.getBoard(.white, .king));
     // Black king
-    try std.testing.expectEqual(@as(u64, 1 << 60), b.getBoard(.black, .king));
+    try std.testing.expectEqual(brd.squareBit(60), b.getBoard(.black, .king));
 
     // White occupancy
     try std.testing.expectEqual(@as(u64, 0x000000000000FFFF), b.occupancy[@backingInt(brd.Color.white)]);
@@ -228,8 +228,8 @@ test "no castling rights" {
     }
     try std.testing.expectEqual(@as(u32, 2), total);
 
-    try std.testing.expectEqual(@as(u64, 1 << 4), b.getBoard(.white, .king));
-    try std.testing.expectEqual(@as(u64, 1 << 60), b.getBoard(.black, .king));
+    try std.testing.expectEqual(brd.squareBit(4), b.getBoard(.white, .king));
+    try std.testing.expectEqual(brd.squareBit(60), b.getBoard(.black, .king));
 
     // Castling Rights
     try std.testing.expectEqual(0b0000, b.castling_rights);
@@ -245,10 +245,10 @@ test "kiwipete" {
     try std.testing.expectEqual(16, @popCount(b.occupancy[@backingInt(brd.Color.white)]));
     try std.testing.expectEqual(16, @popCount(b.occupancy[@backingInt(brd.Color.black)]));
 
-    try std.testing.expect(b.getBoard(.white, .knight) & @as(u64, 1 << 36) != 0);
-    try std.testing.expect(b.getBoard(.black, .pawn) & @as(u64, 1 << 25) != 0);
-    try std.testing.expect(b.getBoard(.black, .queen) & @as(u64, 1 << 52) != 0);
-    try std.testing.expect(b.getBoard(.white, .queen) & @as(u64, 1 << 21) != 0);
+    try std.testing.expect(b.getBoard(.white, .knight) & brd.squareBit(36) != 0);
+    try std.testing.expect(b.getBoard(.black, .pawn) & brd.squareBit(25) != 0);
+    try std.testing.expect(b.getBoard(.black, .queen) & brd.squareBit(52) != 0);
+    try std.testing.expect(b.getBoard(.white, .queen) & brd.squareBit(21) != 0);
 }
 
 // INVALID INPUT TESTS
