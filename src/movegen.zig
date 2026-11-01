@@ -148,7 +148,7 @@ pub fn doublePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveLis
 
 pub fn pawnCapturesToMoves(board: *const Board, color: Color, move_list: *MoveList) void {
     var pawns = board.getBoard(color, .pawn);
-    const occupied_by_opponent = if (color == .white) board.occupancy[@backingInt(Color.black)] else board.occupancy[@backingInt(Color.white)]; // pawn captures only legal if occupied by opponent or en passant
+    const occupied_by_opponent = board.occupancy[@backingInt(color.opposite())]; // pawn captures only legal if occupied by opponent or en passant
     const promotion_rank = if (color == .white) rank_8 else rank_1;
     const ep_rank = if (color == .white) rank_6 else rank_3;
 
