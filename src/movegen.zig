@@ -7,8 +7,10 @@ const Board = brd.Board;
 const Color = brd.Color;
 const Piece = brd.Piece;
 
-const rank_3: u64 = 0x0000000000FF0000;
-const rank_6: u64 = 0x0000FF0000000000;
+const rank_1: u64 = 0x00000000000000FF; // black promotion rank
+const rank_3: u64 = 0x0000000000FF0000; // where a white pawn lands after a push from rank 2 (double-push filter); black's en passant target rank
+const rank_6: u64 = 0x0000FF0000000000; // where a black pawn lands after a push from rank 7 (double-push filter); white's en passant target rank
+const rank_8: u64 = 0xFF00000000000000; // white promotion rank
 pub fn generatePawnPushes(board: *const Board, color: Color) struct { single: u64, double: u64 } {
     const occupied = board.occupancy[@backingInt(Color.white)] | board.occupancy[@backingInt(Color.black)];
     const empty = ~occupied;
@@ -81,206 +83,107 @@ pub const MoveList = struct {
     }
 };
 
+const quiet_promotion_flags = [_]MoveFlags{
+    .knight_promotion,
+    .bishop_promotion,
+    .rook_promotion,
+    .queen_promotion,
+};
+
+const capture_promotion_flags = [_]MoveFlags{
+    .knight_promotion_capture,
+    .bishop_promotion_capture,
+    .rook_promotion_capture,
+    .queen_promotion_capture,
+};
+
+/// Emits all four promotion moves (knight, bishop, rook, queen) for a pawn moving
+/// from `from` to `to`, using either quiet or capture promotion flags.
+fn addPromotionMoves(move_list: *MoveList, from: brd.Square, to: brd.Square, is_capture: bool) void {
+    const flags = if (is_capture) capture_promotion_flags else quiet_promotion_flags;
+    for (flags) |flag| {
+        move_list.add(.{
+            .from = from,
+            .to = to,
+            .flags = flag,
+        });
+    }
+}
+
 pub fn singlePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveList) void {
-    var bb = bit_board;
-    if (color == .white) {
-        while (bb != 0) : (bb &= bb - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(bb));
-            if (pawn_square >= 56) {
-                // emit four promotion moves, one per type
-                move_list.add(.{
-                    .from = pawn_square - 8,
-                    .to = pawn_square,
-                    .flags = .knight_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square - 8,
-                    .to = pawn_square,
-                    .flags = .bishop_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square - 8,
-                    .to = pawn_square,
-                    .flags = .rook_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square - 8,
-                    .to = pawn_square,
-                    .flags = .queen_promotion,
-                });
-                continue;
-            }
-            move_list.add(.{
-                .from = pawn_square - 8,
-                .to = pawn_square,
-                .flags = .quiet_move,
-            });
-        }
-    } else {
-        while (bb != 0) : (bb &= bb - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(bb));
-            if (pawn_square <= 7) {
-                // emit four promotion moves, one per type
-                move_list.add(.{
-                    .from = pawn_square + 8,
-                    .to = pawn_square,
-                    .flags = .knight_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square + 8,
-                    .to = pawn_square,
-                    .flags = .bishop_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square + 8,
-                    .to = pawn_square,
-                    .flags = .rook_promotion,
-                });
-                move_list.add(.{
-                    .from = pawn_square + 8,
-                    .to = pawn_square,
-                    .flags = .queen_promotion,
-                });
-                continue;
-            }
-            move_list.add(.{
-                .from = pawn_square + 8,
-                .to = pawn_square,
-                .flags = .quiet_move,
-            });
-        }
+    // Split destinations up front by promotion rank so the inner loops need no per-square rank checks.
+    const promotion_rank = if (color == .white) rank_8 else rank_1;
+    var normal = bit_board & ~promotion_rank;
+    var promoting = bit_board & promotion_rank;
+
+    while (normal != 0) : (normal &= normal - 1) {
+        const to: brd.Square = @intCast(@ctz(normal));
+        move_list.add(.{
+            .from = if (color == .white) to - 8 else to + 8,
+            .to = to,
+            .flags = .quiet_move,
+        });
+    }
+
+    while (promoting != 0) : (promoting &= promoting - 1) {
+        const to: brd.Square = @intCast(@ctz(promoting));
+        const from: brd.Square = if (color == .white) to - 8 else to + 8;
+        addPromotionMoves(move_list, from, to, false);
     }
 }
 
 pub fn doublePawnPushesToMoves(bit_board: u64, color: Color, move_list: *MoveList) void {
+    // Double pushes only land on rank 4 (white) or rank 5 (black), so they never promote
+    // and only differ in the direction of the 16-square offset.
     var bb = bit_board;
-    if (color == .white) {
-        while (bb != 0) : (bb &= bb - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(bb));
-            move_list.add(.{
-                .from = pawn_square - 16,
-                .to = pawn_square,
-                .flags = .double_pawn_push,
-            });
-        }
-    } else {
-        while (bb != 0) : (bb &= bb - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(bb));
-            move_list.add(.{
-                .from = pawn_square + 16,
-                .to = pawn_square,
-                .flags = .double_pawn_push,
-            });
-        }
+    while (bb != 0) : (bb &= bb - 1) {
+        const to: brd.Square = @intCast(@ctz(bb));
+        move_list.add(.{
+            .from = if (color == .white) to - 16 else to + 16,
+            .to = to,
+            .flags = .double_pawn_push,
+        });
     }
 }
 
-const pawn_attack_mask = att.pawn_attacks;
 pub fn pawnCapturesToMoves(board: *const Board, color: Color, move_list: *MoveList) void {
     var pawns = board.getBoard(color, .pawn);
     const occupied_by_opponent = if (color == .white) board.occupancy[@backingInt(Color.black)] else board.occupancy[@backingInt(Color.white)]; // pawn captures only legal if occupied by opponent
+    const promotion_rank = if (color == .white) rank_8 else rank_1;
+    const ep_rank = if (color == .white) rank_6 else rank_3;
 
-    if (color == .white) {
-        while (pawns != 0) : (pawns &= pawns - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(pawns));
-            // compare attacks on pawn_square with pawn attack mask
-            const pawn_attacks = pawn_attack_mask[@backingInt(color)][pawn_square];
+    while (pawns != 0) : (pawns &= pawns - 1) {
+        const pawn_square: brd.Square = @intCast(@ctz(pawns));
+        const pawn_attacks = att.pawn_attacks[@backingInt(color)][pawn_square];
 
-            // check if attacking en passant square
-            if (board.en_passant) |ep_sq| {
-                if (pawn_attacks & squareBit(ep_sq) & rank_6 != 0) {
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = ep_sq,
-                        .flags = .en_passant_capture,
-                    });
-                }
-            }
-
-            var opponents_attacked = pawn_attacks & occupied_by_opponent;
-            while (opponents_attacked != 0) : (opponents_attacked &= opponents_attacked - 1) {
-                const attack_square: brd.Square = @intCast(@ctz(opponents_attacked));
-                if (attack_square >= 56) {
-                    // emit four promotion capture moves, one per type
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .knight_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .bishop_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .rook_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .queen_promotion_capture,
-                    });
-                    continue;
-                }
+        // Check if attacking the en passant target square on the opponent's en passant rank.
+        if (board.en_passant) |ep_sq| {
+            if (pawn_attacks & squareBit(ep_sq) & ep_rank != 0) {
                 move_list.add(.{
                     .from = pawn_square,
-                    .to = attack_square,
-                    .flags = .capture,
+                    .to = ep_sq,
+                    .flags = .en_passant_capture,
                 });
             }
         }
-    } else {
-        while (pawns != 0) : (pawns &= pawns - 1) {
-            const pawn_square: brd.Square = @intCast(@ctz(pawns));
-            // compare attacks on pawn_square with pawn attack mask
-            const pawn_attacks = pawn_attack_mask[@backingInt(color)][pawn_square];
 
-            // check if attacking en passant square
-            if (board.en_passant) |ep_sq| {
-                if (pawn_attacks & squareBit(ep_sq) & rank_3 != 0) {
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = ep_sq,
-                        .flags = .en_passant_capture,
-                    });
-                }
-            }
+        // Partition attacked opponent squares into normal captures and promotion captures.
+        const opponents_attacked = pawn_attacks & occupied_by_opponent;
+        var normal = opponents_attacked & ~promotion_rank;
+        var promoting = opponents_attacked & promotion_rank;
 
-            var opponents_attacked = pawn_attacks & occupied_by_opponent;
-            while (opponents_attacked != 0) : (opponents_attacked &= opponents_attacked - 1) {
-                const attack_square: brd.Square = @intCast(@ctz(opponents_attacked));
-                if (attack_square <= 7) {
-                    // emit four promotion capture moves, one per type
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .knight_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .bishop_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .rook_promotion_capture,
-                    });
-                    move_list.add(.{
-                        .from = pawn_square,
-                        .to = attack_square,
-                        .flags = .queen_promotion_capture,
-                    });
-                    continue;
-                }
-                move_list.add(.{
-                    .from = pawn_square,
-                    .to = attack_square,
-                    .flags = .capture,
-                });
-            }
+        while (normal != 0) : (normal &= normal - 1) {
+            const attack_square: brd.Square = @intCast(@ctz(normal));
+            move_list.add(.{
+                .from = pawn_square,
+                .to = attack_square,
+                .flags = .capture,
+            });
+        }
+
+        while (promoting != 0) : (promoting &= promoting - 1) {
+            const attack_square: brd.Square = @intCast(@ctz(promoting));
+            addPromotionMoves(move_list, pawn_square, attack_square, true);
         }
     }
 }
@@ -799,4 +702,18 @@ test "en passant square out of reach produces no en passant move" {
     pawnCapturesToMoves(&b, .white, &list);
 
     try std.testing.expectEqual(@as(u16, 0), list.count);
+}
+
+test "en passant does not wrap across files" {
+    // White pawn on h4 (31), black pawn on a5 (32).
+    // Without file masking, h4 would wrap to a6 (40) and a5 would wrap to h3 (23).
+    const bw = try fen.parseFen("4k3/8/8/p7/7P/8/8/4K3 w - a6 0 1");
+    var white_list = MoveList{};
+    pawnCapturesToMoves(&bw, .white, &white_list);
+    try std.testing.expectEqual(@as(u16, 0), white_list.count);
+
+    const bb = try fen.parseFen("4k3/8/8/p7/7P/8/8/4K3 b - h3 0 1");
+    var black_list = MoveList{};
+    pawnCapturesToMoves(&bb, .black, &black_list);
+    try std.testing.expectEqual(@as(u16, 0), black_list.count);
 }

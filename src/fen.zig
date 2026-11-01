@@ -24,8 +24,16 @@ fn parsePiecePlacement(board: *brd.Board, pieces: []const u8) InvalidFen!void {
 
             const square: brd.Square = @intCast(current_rank * 8 + current_file); // should be safe, as current_file and current_rank are at most 7
             switch (c) {
-                'P' => board.setPiece(.white, .pawn, square),
-                'p' => board.setPiece(.black, .pawn, square),
+                'P' => {
+                    // Pawns cannot legally exist on rank 1 or rank 8
+                    if (current_rank == 0 or current_rank == 7) return InvalidFen.InvalidPiecePlacement;
+                    board.setPiece(.white, .pawn, square);
+                },
+                'p' => {
+                    // Pawns cannot legally exist on rank 1 or rank 8
+                    if (current_rank == 0 or current_rank == 7) return InvalidFen.InvalidPiecePlacement;
+                    board.setPiece(.black, .pawn, square);
+                },
                 'N' => board.setPiece(.white, .knight, square),
                 'n' => board.setPiece(.black, .knight, square),
                 'B' => board.setPiece(.white, .bishop, square),
@@ -266,6 +274,10 @@ test "rejects invalid FENs" {
         .{ .fen = "9/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // digit 9
         .{ .fen = "rnbqkbnr/pppppppp/08/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // digit 0
         .{ .fen = "45/8/8/8/8/8/8/8 w - - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // digits sum to 9
+        .{ .fen = "Pnbqkbnr/pppppppp/8/8/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // white pawn on rank 8
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/1PPPPPPP/PNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // white pawn on rank 1
+        .{ .fen = "pnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // black pawn on rank 8
+        .{ .fen = "rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/pNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // black pawn on rank 1
 
         // Field count
         .{ .fen = start ++ " w KQkq - 0", .err = InvalidFen.InvalidNumberOfFields }, // missing field
