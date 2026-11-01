@@ -4,6 +4,10 @@ const std = @import("std");
 pub const Color = enum(u1) {
     white = 0,
     black = 1,
+
+    pub fn opposite(self: Color) Color {
+        return if (self == .white) .black else .white;
+    }
 };
 
 // use 3 bits to indicate piece
