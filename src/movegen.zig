@@ -188,12 +188,12 @@ pub fn pawnCapturesToMoves(board: *const Board, color: Color, move_list: *MoveLi
     }
 }
 
-pub fn leaperMoves(board: *const Board, color: Color, piece: Piece, move_list: *MoveList) void {
+pub fn leaperMoves(board: *const Board, color: Color, comptime piece: Piece, move_list: *MoveList) void {
     var bb = board.getBoard(color, piece);
     const attack_table = switch (piece) {
-        .knight => att.knight_attacks,
-        .king => att.king_attacks,
-        else => @panic("got non leaper in leaperMoves"),
+        .knight => &att.knight_attacks,
+        .king => &att.king_attacks,
+        else => @compileError("leaperMoves needs a knight or king"),
     };
     const own_occupancy = board.occupancy[@backingInt(color)];
     const opponent_occupancy = board.occupancy[@backingInt(color.opposite())];
