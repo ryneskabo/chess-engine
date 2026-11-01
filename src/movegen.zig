@@ -188,6 +188,29 @@ pub fn pawnCapturesToMoves(board: *const Board, color: Color, move_list: *MoveLi
     }
 }
 
+pub fn addMovesFromTargets(move_list: *MoveList, from: brd.Square, targets: u64, opponent_occupancy: u64) void {
+    var captures = targets & opponent_occupancy;
+    var quiet_moves = targets & ~opponent_occupancy;
+
+    while (quiet_moves != 0) : (quiet_moves &= quiet_moves - 1) {
+        const target_square: brd.Square = @intCast(@ctz(quiet_moves));
+        move_list.add(.{
+            .from = from,
+            .to = target_square,
+            .flags = .quiet_move,
+        });
+    }
+
+    while (captures != 0) : (captures &= captures - 1) {
+        const target_square: brd.Square = @intCast(@ctz(captures));
+        move_list.add(.{
+            .from = from,
+            .to = target_square,
+            .flags = .capture,
+        });
+    }
+}
+
 pub fn leaperMoves(board: *const Board, color: Color, comptime piece: Piece, move_list: *MoveList) void {
     var bb = board.getBoard(color, piece);
     const attack_table = switch (piece) {
@@ -200,28 +223,9 @@ pub fn leaperMoves(board: *const Board, color: Color, comptime piece: Piece, mov
 
     while (bb != 0) : (bb &= bb - 1) {
         const sq: brd.Square = @intCast(@ctz(bb));
-        const attacked_squares = attack_table[sq] & ~own_occupancy;
+        const targets = attack_table[sq] & ~own_occupancy;
 
-        var captures = attacked_squares & opponent_occupancy;
-        var quiet_moves = attacked_squares & ~opponent_occupancy;
-
-        while (quiet_moves != 0) : (quiet_moves &= quiet_moves - 1) {
-            const attack_square: brd.Square = @intCast(@ctz(quiet_moves));
-            move_list.add(.{
-                .from = sq,
-                .to = attack_square,
-                .flags = .quiet_move,
-            });
-        }
-
-        while (captures != 0) : (captures &= captures - 1) {
-            const attack_square: brd.Square = @intCast(@ctz(captures));
-            move_list.add(.{
-                .from = sq,
-                .to = attack_square,
-                .flags = .capture,
-            });
-        }
+        addMovesFromTargets(move_list, sq, targets, opponent_occupancy);
     }
 }
 
