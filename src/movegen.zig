@@ -7,10 +7,66 @@ const Board = brd.Board;
 const Color = brd.Color;
 const Piece = brd.Piece;
 
+const squareBit = brd.squareBit;
+
 const rank_1: u64 = 0x00000000000000FF; // black promotion rank
 const rank_3: u64 = 0x0000000000FF0000; // where a white pawn lands after a push from rank 2 (double-push filter); black's en passant target rank
 const rank_6: u64 = 0x0000FF0000000000; // where a black pawn lands after a push from rank 7 (double-push filter); white's en passant target rank
 const rank_8: u64 = 0xFF00000000000000; // white promotion rank
+
+/// Pass in 0-7 for rank and file
+pub fn bitBoardFromRankAndFile(rank: u3, file: u3) u64 {
+    return squareBit(@as(u6, rank) * 8 + file);
+}
+
+pub const RayDirection = enum(u3) {
+    north = 0,
+    northeast = 1,
+    northwest = 2,
+    east = 3,
+    south = 4,
+    southeast = 5,
+    southwest = 6,
+    west = 7,
+};
+
+pub const ray_table: [8][64]u64 = blk: {
+    @setEvalBranchQuota(10000);
+    var rays: [8][64]u64 = @splat(@splat(0));
+
+    // Step vectors (rank_step, file_step) ordered to match RayDirection enum values.
+    const steps = [8][2]i8{
+        .{ 1, 0 }, // north
+        .{ 1, 1 }, // northeast
+        .{ 1, -1 }, // northwest
+        .{ 0, 1 }, // east
+        .{ -1, 0 }, // south
+        .{ -1, 1 }, // southeast
+        .{ -1, -1 }, // southwest
+        .{ 0, -1 }, // west
+    };
+
+    for (steps, 0..) |step, dir| {
+        const rank_step = step[0];
+        const file_step = step[1];
+
+        for (0..64) |sq| {
+            var rank: i8 = @intCast(sq / 8);
+            var file: i8 = @intCast(sq % 8);
+            rank += rank_step;
+            file += file_step;
+            while (rank >= 0 and rank < 8 and file >= 0 and file < 8) : ({
+                rank += rank_step;
+                file += file_step;
+            }) {
+                rays[dir][sq] |= bitBoardFromRankAndFile(@intCast(rank), @intCast(file));
+            }
+        }
+    }
+
+    break :blk rays;
+};
+
 pub fn generatePawnPushes(board: *const Board, color: Color) struct { single: u64, double: u64 } {
     const occupied = board.occupancy[@backingInt(Color.white)] | board.occupancy[@backingInt(Color.black)];
     const empty = ~occupied;
@@ -228,8 +284,6 @@ pub fn leaperMoves(board: *const Board, color: Color, comptime piece: Piece, mov
         addMovesFromTargets(move_list, sq, targets, opponent_occupancy);
     }
 }
-
-const squareBit = brd.squareBit;
 
 test "pushes from the starting position" {
     const b = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -896,4 +950,187 @@ test "king captures enemy piece and is blocked by friendly piece" {
     }
     try std.testing.expectEqual(@as(usize, 6), quiet_count);
     try std.testing.expectEqual(@as(usize, 1), capture_count);
+}
+
+test "ray_table from corners a1 and h8" {
+    // a1 (0): North = a2..a8, East = b1..h1, Northeast = b2..h8, all others empty
+    const a1_north = squareBit(8) | squareBit(16) | squareBit(24) | squareBit(32) | squareBit(40) | squareBit(48) | squareBit(56);
+    const a1_east = squareBit(1) | squareBit(2) | squareBit(3) | squareBit(4) | squareBit(5) | squareBit(6) | squareBit(7);
+    const a1_ne = squareBit(9) | squareBit(18) | squareBit(27) | squareBit(36) | squareBit(45) | squareBit(54) | squareBit(63);
+
+    try std.testing.expectEqual(a1_north, ray_table[@backingInt(RayDirection.north)][0]);
+    try std.testing.expectEqual(a1_east, ray_table[@backingInt(RayDirection.east)][0]);
+    try std.testing.expectEqual(a1_ne, ray_table[@backingInt(RayDirection.northeast)][0]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.northwest)][0]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.south)][0]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.southeast)][0]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.southwest)][0]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.west)][0]);
+
+    // h8 (63): South = h1..h7, West = a8..g8, Southwest = a1..g7, all others empty
+    const h8_south = squareBit(7) | squareBit(15) | squareBit(23) | squareBit(31) | squareBit(39) | squareBit(47) | squareBit(55);
+    const h8_west = squareBit(56) | squareBit(57) | squareBit(58) | squareBit(59) | squareBit(60) | squareBit(61) | squareBit(62);
+    const h8_sw = squareBit(0) | squareBit(9) | squareBit(18) | squareBit(27) | squareBit(36) | squareBit(45) | squareBit(54);
+
+    try std.testing.expectEqual(h8_south, ray_table[@backingInt(RayDirection.south)][63]);
+    try std.testing.expectEqual(h8_west, ray_table[@backingInt(RayDirection.west)][63]);
+    try std.testing.expectEqual(h8_sw, ray_table[@backingInt(RayDirection.southwest)][63]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.north)][63]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.northeast)][63]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.northwest)][63]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.east)][63]);
+    try std.testing.expectEqual(@as(u64, 0), ray_table[@backingInt(RayDirection.southeast)][63]);
+}
+
+test "ray_table from center square e4 in all 8 directions" {
+    // e4 = 28 (rank 3, file 4)
+    try std.testing.expectEqual(
+        squareBit(36) | squareBit(44) | squareBit(52) | squareBit(60), // e5, e6, e7, e8
+        ray_table[@backingInt(RayDirection.north)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(20) | squareBit(12) | squareBit(4), // e3, e2, e1
+        ray_table[@backingInt(RayDirection.south)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(29) | squareBit(30) | squareBit(31), // f4, g4, h4
+        ray_table[@backingInt(RayDirection.east)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(27) | squareBit(26) | squareBit(25) | squareBit(24), // d4, c4, b4, a4
+        ray_table[@backingInt(RayDirection.west)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(37) | squareBit(46) | squareBit(55), // f5, g6, h7
+        ray_table[@backingInt(RayDirection.northeast)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(35) | squareBit(42) | squareBit(49) | squareBit(56), // d5, c6, b7, a8
+        ray_table[@backingInt(RayDirection.northwest)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(21) | squareBit(14) | squareBit(7), // f3, g2, h1
+        ray_table[@backingInt(RayDirection.southeast)][28],
+    );
+    try std.testing.expectEqual(
+        squareBit(19) | squareBit(10) | squareBit(1), // d3, c2, b1
+        ray_table[@backingInt(RayDirection.southwest)][28],
+    );
+}
+
+test "ray_table has no self-inclusion, disjoint directions, and 14 rook squares per square" {
+    for (0..64) |sq| {
+        const origin_bit = squareBit(@intCast(sq));
+
+        for (0..8) |d1| {
+            // A ray never includes the origin square itself
+            try std.testing.expectEqual(@as(u64, 0), ray_table[d1][sq] & origin_bit);
+
+            // Different directions from the same square never overlap
+            for ((d1 + 1)..8) |d2| {
+                try std.testing.expectEqual(@as(u64, 0), ray_table[d1][sq] & ray_table[d2][sq]);
+            }
+        }
+
+        // Orthogonal rays from any square always cover 7 rank + 7 file = 14 squares
+        const rook_rays = ray_table[@backingInt(RayDirection.north)][sq] |
+            ray_table[@backingInt(RayDirection.south)][sq] |
+            ray_table[@backingInt(RayDirection.east)][sq] |
+            ray_table[@backingInt(RayDirection.west)][sq];
+        try std.testing.expectEqual(@as(u7, 14), @popCount(rook_rays));
+    }
+}
+
+test "ray_table rook and bishop square counts on d4 and a1" {
+    // d4 = 27: rook attacks 14 squares, bishop attacks 13 squares
+    const d4_rook = ray_table[@backingInt(RayDirection.north)][27] |
+        ray_table[@backingInt(RayDirection.south)][27] |
+        ray_table[@backingInt(RayDirection.east)][27] |
+        ray_table[@backingInt(RayDirection.west)][27];
+    const d4_bishop = ray_table[@backingInt(RayDirection.northeast)][27] |
+        ray_table[@backingInt(RayDirection.northwest)][27] |
+        ray_table[@backingInt(RayDirection.southeast)][27] |
+        ray_table[@backingInt(RayDirection.southwest)][27];
+    try std.testing.expectEqual(@as(u7, 14), @popCount(d4_rook));
+    try std.testing.expectEqual(@as(u7, 13), @popCount(d4_bishop));
+
+    // a1 = 0: rook attacks 14 squares, bishop attacks 7 squares
+    const a1_rook = ray_table[@backingInt(RayDirection.north)][0] |
+        ray_table[@backingInt(RayDirection.south)][0] |
+        ray_table[@backingInt(RayDirection.east)][0] |
+        ray_table[@backingInt(RayDirection.west)][0];
+    const a1_bishop = ray_table[@backingInt(RayDirection.northeast)][0] |
+        ray_table[@backingInt(RayDirection.northwest)][0] |
+        ray_table[@backingInt(RayDirection.southeast)][0] |
+        ray_table[@backingInt(RayDirection.southwest)][0];
+    try std.testing.expectEqual(@as(u7, 14), @popCount(a1_rook));
+    try std.testing.expectEqual(@as(u7, 7), @popCount(a1_bishop));
+}
+
+test "ray_table blocker masking on d4 north (d6) and south (d2)" {
+    // Rook on d4 (27) with a blocker on d6 (43):
+    // North ray from d4 masked by North ray from the first blocker (d6) leaves d5 (35) and d6 (43), excluding d7 (51) and d8 (59).
+    const north_dir = @backingInt(RayDirection.north);
+    const north_blockers = ray_table[north_dir][27] & squareBit(43);
+    const first_north_blocker: brd.Square = @intCast(@ctz(north_blockers));
+    const north_attacks = ray_table[north_dir][27] ^ ray_table[north_dir][first_north_blocker];
+    try std.testing.expectEqual(squareBit(35) | squareBit(43), north_attacks);
+    try std.testing.expectEqual(@as(u64, 0), north_attacks & (squareBit(51) | squareBit(59)));
+
+    // Rook on d4 (27) with a blocker on d2 (11):
+    // South ray from d4 masked by South ray from the first blocker (d2, highest bit via 63 - @clz) leaves d3 (19) and d2 (11), excluding d1 (3).
+    const south_dir = @backingInt(RayDirection.south);
+    const south_blockers = ray_table[south_dir][27] & squareBit(11);
+    const first_south_blocker: brd.Square = @intCast(63 - @clz(south_blockers));
+    const south_attacks = ray_table[south_dir][27] ^ ray_table[south_dir][first_south_blocker];
+    try std.testing.expectEqual(squareBit(19) | squareBit(11), south_attacks);
+    try std.testing.expectEqual(@as(u64, 0), south_attacks & squareBit(3));
+}
+
+test "ray_table totals across all 64 squares for rook, bishop, and queen" {
+    var rook_total: u32 = 0;
+    var bishop_total: u32 = 0;
+    var queen_total: u32 = 0;
+
+    for (0..64) |sq| {
+        const rook_rays = ray_table[@backingInt(RayDirection.north)][sq] |
+            ray_table[@backingInt(RayDirection.south)][sq] |
+            ray_table[@backingInt(RayDirection.east)][sq] |
+            ray_table[@backingInt(RayDirection.west)][sq];
+        const bishop_rays = ray_table[@backingInt(RayDirection.northeast)][sq] |
+            ray_table[@backingInt(RayDirection.northwest)][sq] |
+            ray_table[@backingInt(RayDirection.southeast)][sq] |
+            ray_table[@backingInt(RayDirection.southwest)][sq];
+        const queen_rays = rook_rays | bishop_rays;
+
+        rook_total += @popCount(rook_rays);
+        bishop_total += @popCount(bishop_rays);
+        queen_total += @popCount(queen_rays);
+    }
+
+    try std.testing.expectEqual(@as(u32, 896), rook_total);
+    try std.testing.expectEqual(@as(u32, 560), bishop_total);
+    try std.testing.expectEqual(@as(u32, 1456), queen_total);
+}
+
+test "ray_table opposite-direction symmetry" {
+    const pairs = [_][2]RayDirection{
+        .{ .north, .south },
+        .{ .east, .west },
+        .{ .northeast, .southwest },
+        .{ .northwest, .southeast },
+    };
+
+    for (pairs) |pair| {
+        const d_fwd = @backingInt(pair[0]);
+        const d_rev = @backingInt(pair[1]);
+
+        for (0..64) |i| {
+            for (0..64) |j| {
+                const j_in_fwd = (ray_table[d_fwd][i] & squareBit(@intCast(j))) != 0;
+                const i_in_rev = (ray_table[d_rev][j] & squareBit(@intCast(i))) != 0;
+                try std.testing.expectEqual(j_in_fwd, i_in_rev);
+            }
+        }
+    }
 }
