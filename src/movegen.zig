@@ -67,6 +67,28 @@ pub const ray_table: [8][64]u64 = blk: {
     break :blk rays;
 };
 
+pub fn rayAttacks(comptime direction: RayDirection, from: brd.Square, occupancy: u64) u64 {
+    const dir = @backingInt(direction);
+    const blockers = ray_table[dir][from] & occupancy;
+
+    if (blockers == 0) return ray_table[dir][from]; // if no blocker, return whole ray, preventing overflow on the following @intCast and preventing underflow in following 63 - @clz
+
+    const first_blocker: brd.Square = if (dir < 4) @intCast(@ctz(blockers)) else @intCast(63 - @clz(blockers)); // use @ctz to get the first blocker when going 'up' the bitboard; when going down, use @clz
+    return ray_table[dir][from] ^ ray_table[dir][first_blocker];
+}
+
+pub fn rookAttacks(from: brd.Square, occupancy: u64) u64 {
+    return rayAttacks(.north, from, occupancy) | rayAttacks(.east, from, occupancy) | rayAttacks(.west, from, occupancy) | rayAttacks(.south, from, occupancy);
+}
+
+pub fn bishopAttacks(from: brd.Square, occupancy: u64) u64 {
+    return rayAttacks(.northeast, from, occupancy) | rayAttacks(.northwest, from, occupancy) | rayAttacks(.southeast, from, occupancy) | rayAttacks(.southwest, from, occupancy);
+}
+
+pub fn queenAttacks(from: brd.Square, occupancy: u64) u64 {
+    return bishopAttacks(from, occupancy) | rookAttacks(from, occupancy);
+}
+
 pub fn generatePawnPushes(board: *const Board, color: Color) struct { single: u64, double: u64 } {
     const occupied = board.occupancy[@backingInt(Color.white)] | board.occupancy[@backingInt(Color.black)];
     const empty = ~occupied;
@@ -280,6 +302,25 @@ pub fn leaperMoves(board: *const Board, color: Color, comptime piece: Piece, mov
     while (bb != 0) : (bb &= bb - 1) {
         const sq: brd.Square = @intCast(@ctz(bb));
         const targets = attack_table[sq] & ~own_occupancy;
+
+        addMovesFromTargets(move_list, sq, targets, opponent_occupancy);
+    }
+}
+
+pub fn sliderMoves(board: *const Board, color: Color, comptime piece: Piece, move_list: *MoveList) void {
+    var bb = board.getBoard(color, piece);
+
+    const own_occupancy = board.occupancy[@backingInt(color)];
+    const opponent_occupancy = board.occupancy[@backingInt(color.opposite())];
+
+    while (bb != 0) : (bb &= bb - 1) {
+        const sq: brd.Square = @intCast(@ctz(bb));
+        const targets = switch (piece) {
+            .bishop => bishopAttacks(sq, opponent_occupancy | own_occupancy),
+            .rook => rookAttacks(sq, opponent_occupancy | own_occupancy),
+            .queen => queenAttacks(sq, opponent_occupancy | own_occupancy),
+            else => @compileError("sliderMoves needs a bishop, rook, or queen"),
+        } & ~own_occupancy;
 
         addMovesFromTargets(move_list, sq, targets, opponent_occupancy);
     }
@@ -1131,6 +1172,571 @@ test "ray_table opposite-direction symmetry" {
                 const i_in_rev = (ray_table[d_rev][j] & squareBit(@intCast(i))) != 0;
                 try std.testing.expectEqual(j_in_fwd, i_in_rev);
             }
+        }
+    }
+}
+
+const RayStep = struct { rank: i8, file: i8 };
+
+/// Reference implementation: walk one square at a time in the given direction,
+/// adding each square until the edge is reached or the first occupied square is hit.
+fn naiveRayAttacks(comptime direction: RayDirection, from: brd.Square, occupancy: u64) u64 {
+    const step: RayStep = switch (direction) {
+        .north => .{ .rank = 1, .file = 0 },
+        .northeast => .{ .rank = 1, .file = 1 },
+        .northwest => .{ .rank = 1, .file = -1 },
+        .east => .{ .rank = 0, .file = 1 },
+        .south => .{ .rank = -1, .file = 0 },
+        .southeast => .{ .rank = -1, .file = 1 },
+        .southwest => .{ .rank = -1, .file = -1 },
+        .west => .{ .rank = 0, .file = -1 },
+    };
+
+    var rank: i8 = @intCast(from / 8);
+    var file: i8 = @intCast(from % 8);
+    var attacks: u64 = 0;
+
+    while (true) {
+        rank += step.rank;
+        file += step.file;
+        if (rank < 0 or rank >= 8 or file < 0 or file >= 8) break;
+
+        const sq: brd.Square = @intCast(rank * 8 + file);
+        const bit = squareBit(sq);
+        attacks |= bit;
+        if (occupancy & bit != 0) break;
+    }
+
+    return attacks;
+}
+
+fn naiveRookAttacks(from: brd.Square, occupancy: u64) u64 {
+    return naiveRayAttacks(.north, from, occupancy) |
+        naiveRayAttacks(.east, from, occupancy) |
+        naiveRayAttacks(.west, from, occupancy) |
+        naiveRayAttacks(.south, from, occupancy);
+}
+
+fn naiveBishopAttacks(from: brd.Square, occupancy: u64) u64 {
+    return naiveRayAttacks(.northeast, from, occupancy) |
+        naiveRayAttacks(.northwest, from, occupancy) |
+        naiveRayAttacks(.southeast, from, occupancy) |
+        naiveRayAttacks(.southwest, from, occupancy);
+}
+
+fn naiveQueenAttacks(from: brd.Square, occupancy: u64) u64 {
+    return naiveRookAttacks(from, occupancy) | naiveBishopAttacks(from, occupancy);
+}
+
+fn sliderTargets(comptime piece: Piece, from: brd.Square, occupancy: u64) u64 {
+    return switch (piece) {
+        .bishop => bishopAttacks(from, occupancy),
+        .rook => rookAttacks(from, occupancy),
+        .queen => queenAttacks(from, occupancy),
+        else => @compileError("sliderTargets needs a bishop, rook, or queen"),
+    };
+}
+
+/// Checks every move generated from `from`, including duplicates and flags.
+fn expectMovesFrom(list: *const MoveList, from: brd.Square, expected_targets: u64, opponent_occupancy: u64) !void {
+    var seen: u64 = 0;
+    for (list.moves[0..list.count]) |m| {
+        if (m.from != from) continue;
+
+        const to_bit = squareBit(m.to);
+        try std.testing.expectEqual(@as(u64, 0), seen & to_bit);
+        seen |= to_bit;
+
+        const expected_flags: MoveFlags = if (opponent_occupancy & to_bit != 0) .capture else .quiet_move;
+        try std.testing.expectEqual(expected_flags, m.flags);
+    }
+
+    try std.testing.expectEqual(expected_targets, seen);
+}
+
+/// Compares sliderMoves against the direct attack functions for one color/piece type.
+fn checkSliderMoves(board: *const Board, color: Color, comptime piece: Piece) !void {
+    var list = MoveList{};
+    sliderMoves(board, color, piece, &list);
+
+    const own_occupancy = board.occupancy[@backingInt(color)];
+    const opponent_occupancy = board.occupancy[@backingInt(color.opposite())];
+    const occupancy = own_occupancy | opponent_occupancy;
+    const pieces = board.getBoard(color, piece);
+
+    var expected_count: usize = 0;
+    var remaining = pieces;
+    while (remaining != 0) : (remaining &= remaining - 1) {
+        const from: brd.Square = @intCast(@ctz(remaining));
+        const targets = sliderTargets(piece, from, occupancy) & ~own_occupancy;
+        expected_count += @as(usize, @popCount(targets));
+        try expectMovesFrom(&list, from, targets, opponent_occupancy);
+    }
+
+    try std.testing.expectEqual(expected_count, @as(usize, list.count));
+
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expect(pieces & squareBit(m.from) != 0);
+    }
+}
+
+test "rayAttacks returns the full ray when the path is empty" {
+    const from: brd.Square = 28; // e4
+
+    try std.testing.expectEqual(
+        squareBit(36) | squareBit(44) | squareBit(52) | squareBit(60), // e5-e8
+        rayAttacks(.north, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(20) | squareBit(12) | squareBit(4), // e3-e1
+        rayAttacks(.south, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(29) | squareBit(30) | squareBit(31), // f4-h4
+        rayAttacks(.east, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(27) | squareBit(26) | squareBit(25) | squareBit(24), // d4-a4
+        rayAttacks(.west, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(37) | squareBit(46) | squareBit(55), // f5-h7
+        rayAttacks(.northeast, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(35) | squareBit(42) | squareBit(49) | squareBit(56), // d5-a8
+        rayAttacks(.northwest, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(21) | squareBit(14) | squareBit(7), // f3-h1
+        rayAttacks(.southeast, from, 0),
+    );
+    try std.testing.expectEqual(
+        squareBit(19) | squareBit(10) | squareBit(1), // d3-b1
+        rayAttacks(.southwest, from, 0),
+    );
+}
+
+test "rayAttacks includes the first blocker and excludes squares behind it" {
+    const from: brd.Square = 28; // e4
+
+    try std.testing.expectEqual(
+        squareBit(36) | squareBit(44), // e5, e6
+        rayAttacks(.north, from, squareBit(44)),
+    );
+    try std.testing.expectEqual(
+        squareBit(20) | squareBit(12), // e3, e2
+        rayAttacks(.south, from, squareBit(12)),
+    );
+    try std.testing.expectEqual(
+        squareBit(29) | squareBit(30), // f4, g4
+        rayAttacks(.east, from, squareBit(30)),
+    );
+    try std.testing.expectEqual(
+        squareBit(27) | squareBit(26), // d4, c4
+        rayAttacks(.west, from, squareBit(26)),
+    );
+    try std.testing.expectEqual(
+        squareBit(37) | squareBit(46), // f5, g6
+        rayAttacks(.northeast, from, squareBit(46)),
+    );
+    try std.testing.expectEqual(
+        squareBit(35) | squareBit(42), // d5, c6
+        rayAttacks(.northwest, from, squareBit(42)),
+    );
+    try std.testing.expectEqual(
+        squareBit(21) | squareBit(14), // f3, g2
+        rayAttacks(.southeast, from, squareBit(14)),
+    );
+    try std.testing.expectEqual(
+        squareBit(19) | squareBit(10), // d3, c2
+        rayAttacks(.southwest, from, squareBit(10)),
+    );
+}
+
+test "rayAttacks chooses the nearest blocker, ignores off-ray blockers, and ignores the origin" {
+    const from: brd.Square = 28; // e4
+    const full_north = squareBit(36) | squareBit(44) | squareBit(52) | squareBit(60);
+
+    // Blockers on e6 and e7: only e6 and the squares before it are attacked.
+    try std.testing.expectEqual(
+        squareBit(36) | squareBit(44),
+        rayAttacks(.north, from, squareBit(44) | squareBit(52)),
+    );
+
+    // An adjacent blocker is the only square returned on that ray.
+    try std.testing.expectEqual(
+        squareBit(36),
+        rayAttacks(.north, from, squareBit(36) | squareBit(52)),
+    );
+
+    // A piece on the slider's own square does not block its own ray.
+    try std.testing.expectEqual(full_north, rayAttacks(.north, from, squareBit(28)));
+
+    // Blockers that are not on the ray do not affect it.
+    try std.testing.expectEqual(
+        full_north,
+        rayAttacks(.north, from, squareBit(0) | squareBit(7) | squareBit(63)),
+    );
+}
+
+test "rayAttacks from the corners stays on the board" {
+    // a1 (0)
+    try std.testing.expectEqual(
+        squareBit(8) | squareBit(16) | squareBit(24), // a2-a4
+        rayAttacks(.north, 0, squareBit(24)),
+    );
+    try std.testing.expectEqual(
+        squareBit(1) | squareBit(2), // b1, c1
+        rayAttacks(.east, 0, squareBit(2)),
+    );
+    try std.testing.expectEqual(
+        squareBit(9) | squareBit(18), // b2, c3
+        rayAttacks(.northeast, 0, squareBit(18)),
+    );
+
+    // h8 (63)
+    try std.testing.expectEqual(
+        squareBit(55) | squareBit(47), // h7, h6
+        rayAttacks(.south, 63, squareBit(47)),
+    );
+    try std.testing.expectEqual(
+        squareBit(62) | squareBit(61), // g8, f8
+        rayAttacks(.west, 63, squareBit(61)),
+    );
+    try std.testing.expectEqual(
+        squareBit(54) | squareBit(45), // g7, f6
+        rayAttacks(.southwest, 63, squareBit(45)),
+    );
+}
+
+test "rayAttacks stops at a single blocker from every square in every direction" {
+    inline for (std.enums.values(RayDirection)) |direction| {
+        for (0..64) |from_index| {
+            const from: brd.Square = @intCast(from_index);
+
+            for (0..64) |blocker_index| {
+                const occupancy = squareBit(@intCast(blocker_index));
+                try std.testing.expectEqual(
+                    naiveRayAttacks(direction, from, occupancy),
+                    rayAttacks(direction, from, occupancy),
+                );
+            }
+        }
+    }
+}
+
+test "rayAttacks matches a naive walk for every square and random occupancies (fixed seed)" {
+    var prng = std.Random.DefaultPrng.init(0x9E37_79B9_7F4A_7C15);
+    const random = prng.random();
+
+    var iteration: usize = 0;
+    while (iteration < 3000) : (iteration += 1) {
+        // Keep a guaranteed empty-board case, then use dense random occupancies.
+        const occupancy: u64 = if (iteration == 0) 0 else random.int(u64);
+
+        inline for (std.enums.values(RayDirection)) |direction| {
+            for (0..64) |sq| {
+                const from: brd.Square = @intCast(sq);
+                try std.testing.expectEqual(
+                    naiveRayAttacks(direction, from, occupancy),
+                    rayAttacks(direction, from, occupancy),
+                );
+            }
+        }
+    }
+}
+
+test "rookAttacks covers the full rank and file on an empty board" {
+    const from: brd.Square = 28; // e4
+    const expected = squareBit(36) | squareBit(44) | squareBit(52) | squareBit(60) | // e5-e8
+        squareBit(20) | squareBit(12) | squareBit(4) | // e3-e1
+        squareBit(29) | squareBit(30) | squareBit(31) | // f4-h4
+        squareBit(27) | squareBit(26) | squareBit(25) | squareBit(24); // d4-a4
+
+    try std.testing.expectEqual(expected, rookAttacks(from, 0));
+    try std.testing.expectEqual(@as(u7, 14), @popCount(expected));
+    try std.testing.expectEqual(expected, rookAttacks(from, squareBit(from)));
+}
+
+test "rookAttacks stops at the nearest blocker on each ray" {
+    // Rook on e4 with blockers on e6, c4, e2, and g4.
+    const occupancy = squareBit(44) | squareBit(26) | squareBit(12) | squareBit(30);
+    const expected = squareBit(36) | squareBit(44) | // e5, e6
+        squareBit(20) | squareBit(12) | // e3, e2
+        squareBit(29) | squareBit(30) | // f4, g4
+        squareBit(27) | squareBit(26); // d4, c4
+
+    const attacks = rookAttacks(28, occupancy);
+    try std.testing.expectEqual(expected, attacks);
+    try std.testing.expectEqual(@as(u7, 8), @popCount(attacks));
+
+    // Nothing past any of the blockers.
+    try std.testing.expectEqual(@as(u64, 0), attacks & (squareBit(52) | squareBit(25) | squareBit(4) | squareBit(31)));
+}
+
+test "rookAttacks with a fully occupied board only reaches adjacent squares" {
+    const occupancy: u64 = ~@as(u64, 0);
+
+    try std.testing.expectEqual(
+        squareBit(36) | squareBit(29) | squareBit(20) | squareBit(27), // e5, f4, e3, d4
+        rookAttacks(28, occupancy),
+    );
+    try std.testing.expectEqual(
+        squareBit(8) | squareBit(1), // a2, b1
+        rookAttacks(0, occupancy),
+    );
+    try std.testing.expectEqual(
+        squareBit(55) | squareBit(62), // h7, g8
+        rookAttacks(63, occupancy),
+    );
+}
+
+test "bishopAttacks covers both diagonals on an empty board" {
+    const from: brd.Square = 28; // e4
+    const expected = squareBit(37) | squareBit(46) | squareBit(55) | // f5-h7
+        squareBit(35) | squareBit(42) | squareBit(49) | squareBit(56) | // d5-a8
+        squareBit(21) | squareBit(14) | squareBit(7) | // f3-h1
+        squareBit(19) | squareBit(10) | squareBit(1); // d3-b1
+
+    try std.testing.expectEqual(expected, bishopAttacks(from, 0));
+    try std.testing.expectEqual(@as(u7, 13), @popCount(expected));
+    try std.testing.expectEqual(expected, bishopAttacks(from, squareBit(from)));
+}
+
+test "bishopAttacks stops on the first blocker of each diagonal" {
+    // Bishop on e4 with blockers on c6 and g2.
+    const occupancy = squareBit(42) | squareBit(14);
+    const expected = squareBit(37) | squareBit(46) | squareBit(55) | // f5, g6, h7
+        squareBit(35) | squareBit(42) | // d5, c6
+        squareBit(21) | squareBit(14) | // f3, g2
+        squareBit(19) | squareBit(10) | squareBit(1); // d3, c2, b1
+
+    const attacks = bishopAttacks(28, occupancy);
+    try std.testing.expectEqual(expected, attacks);
+    try std.testing.expectEqual(@as(u7, 10), @popCount(attacks));
+
+    // Nothing behind c6 or g2.
+    try std.testing.expectEqual(@as(u64, 0), attacks & (squareBit(49) | squareBit(56) | squareBit(7)));
+}
+
+test "bishopAttacks with a fully occupied board only reaches adjacent diagonals" {
+    const occupancy: u64 = ~@as(u64, 0);
+
+    try std.testing.expectEqual(
+        squareBit(35) | squareBit(37) | squareBit(19) | squareBit(21), // d5, f5, d3, f3
+        bishopAttacks(28, occupancy),
+    );
+    try std.testing.expectEqual(squareBit(9), bishopAttacks(0, occupancy)); // b2 only
+    try std.testing.expectEqual(squareBit(54), bishopAttacks(63, occupancy)); // g7 only
+}
+
+test "queenAttacks combines rook and bishop rays" {
+    const from: brd.Square = 28; // e4
+    const empty_expected = rookAttacks(from, 0) | bishopAttacks(from, 0);
+
+    try std.testing.expectEqual(empty_expected, queenAttacks(from, 0));
+    try std.testing.expectEqual(@as(u7, 27), @popCount(empty_expected));
+
+    // Queen on e4 with blockers on e6, c6, c4, and g2.
+    const occupancy = squareBit(44) | squareBit(42) | squareBit(26) | squareBit(14);
+    const expected = squareBit(36) | squareBit(44) | // e5, e6
+        squareBit(20) | squareBit(12) | squareBit(4) | // e3-e1
+        squareBit(29) | squareBit(30) | squareBit(31) | // f4-h4
+        squareBit(27) | squareBit(26) | // d4, c4
+        squareBit(37) | squareBit(46) | squareBit(55) | // f5-h7
+        squareBit(35) | squareBit(42) | // d5, c6
+        squareBit(21) | squareBit(14) | // f3, g2
+        squareBit(19) | squareBit(10) | squareBit(1); // d3-b1
+
+    try std.testing.expectEqual(expected, queenAttacks(from, occupancy));
+    try std.testing.expectEqual(@as(u7, 20), @popCount(expected));
+    try std.testing.expectEqual(expected, rookAttacks(from, occupancy) | bishopAttacks(from, occupancy));
+}
+
+test "rook, bishop, and queen attacks match naive walks for every square and random occupancies" {
+    var prng = std.Random.DefaultPrng.init(0xD1B5_4A32_D192_ED03);
+    const random = prng.random();
+
+    var iteration: usize = 0;
+    while (iteration < 3000) : (iteration += 1) {
+        const occupancy: u64 = if (iteration == 0) 0 else random.int(u64);
+
+        for (0..64) |sq| {
+            const from: brd.Square = @intCast(sq);
+            try std.testing.expectEqual(
+                naiveRookAttacks(from, occupancy),
+                rookAttacks(from, occupancy),
+            );
+            try std.testing.expectEqual(
+                naiveBishopAttacks(from, occupancy),
+                bishopAttacks(from, occupancy),
+            );
+            try std.testing.expectEqual(
+                naiveQueenAttacks(from, occupancy),
+                queenAttacks(from, occupancy),
+            );
+        }
+    }
+}
+
+test "sliderMoves generates all rook moves on an empty board" {
+    var board = brd.empty;
+    board.setPiece(.white, .rook, 28); // e4
+
+    var list = MoveList{};
+    sliderMoves(&board, .white, .rook, &list);
+
+    const expected = squareBit(36) | squareBit(44) | squareBit(52) | squareBit(60) | // e5-e8
+        squareBit(20) | squareBit(12) | squareBit(4) | // e3-e1
+        squareBit(29) | squareBit(30) | squareBit(31) | // f4-h4
+        squareBit(27) | squareBit(26) | squareBit(25) | squareBit(24); // d4-a4
+
+    try std.testing.expectEqual(@as(u16, 14), list.count);
+    try expectMovesFrom(&list, 28, expected, 0);
+}
+
+test "sliderMoves includes a capture but stops at a friendly piece for a rook" {
+    // White rook e4, friendly pawn e2, black pawn e6.
+    var board = brd.empty;
+    board.setPiece(.white, .rook, 28);
+    board.setPiece(.white, .pawn, 12);
+    board.setPiece(.black, .pawn, 44);
+
+    var list = MoveList{};
+    sliderMoves(&board, .white, .rook, &list);
+
+    const expected = squareBit(36) | squareBit(44) | // e5, capture e6
+        squareBit(20) | // e3; e2 is friendly
+        squareBit(29) | squareBit(30) | squareBit(31) | // f4-h4
+        squareBit(27) | squareBit(26) | squareBit(25) | squareBit(24); // d4-a4
+
+    try std.testing.expectEqual(@as(u16, 10), list.count);
+    try expectMovesFrom(&list, 28, expected, board.occupancy[@backingInt(Color.black)]);
+
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expect(m.to != 12); // friendly pawn itself
+        try std.testing.expect(m.to != 52); // beyond the captured pawn
+    }
+}
+
+test "sliderMoves handles captures and friendly blockers for a bishop" {
+    // White bishop e4, black knight c6, white knight g2.
+    var board = brd.empty;
+    board.setPiece(.white, .bishop, 28);
+    board.setPiece(.black, .knight, 42);
+    board.setPiece(.white, .knight, 14);
+
+    var list = MoveList{};
+    sliderMoves(&board, .white, .bishop, &list);
+
+    const expected = squareBit(37) | squareBit(46) | squareBit(55) | // f5, g6, h7
+        squareBit(35) | squareBit(42) | // d5, capture c6
+        squareBit(21) | // f3; g2 is friendly
+        squareBit(19) | squareBit(10) | squareBit(1); // d3, c2, b1
+
+    try std.testing.expectEqual(@as(u16, 9), list.count);
+    try expectMovesFrom(&list, 28, expected, board.occupancy[@backingInt(Color.black)]);
+
+    for (list.moves[0..list.count]) |m| {
+        try std.testing.expect(m.to != 14); // friendly knight itself
+        try std.testing.expect(m.to != 7); // beyond the friendly knight
+        try std.testing.expect(m.to != 49); // beyond c6
+        try std.testing.expect(m.to != 56); // beyond c6
+    }
+}
+
+test "sliderMoves combines rook and bishop rays for a queen" {
+    // White queen e4, black pawn e6, black knight c6, white pawn c4, black bishop g2.
+    var board = brd.empty;
+    board.setPiece(.white, .queen, 28);
+    board.setPiece(.black, .pawn, 44);
+    board.setPiece(.black, .knight, 42);
+    board.setPiece(.white, .pawn, 26);
+    board.setPiece(.black, .bishop, 14);
+
+    var list = MoveList{};
+    sliderMoves(&board, .white, .queen, &list);
+
+    const expected = squareBit(36) | squareBit(44) | // e5, capture e6
+        squareBit(20) | squareBit(12) | squareBit(4) | // e3-e1
+        squareBit(29) | squareBit(30) | squareBit(31) | // f4-h4
+        squareBit(27) | // d4; c4 is friendly
+        squareBit(37) | squareBit(46) | squareBit(55) | // f5-h7
+        squareBit(35) | squareBit(42) | // d5, capture c6
+        squareBit(21) | squareBit(14) | // f3, capture g2
+        squareBit(19) | squareBit(10) | squareBit(1); // d3, c2, b1
+
+    try std.testing.expectEqual(@as(u16, 19), list.count);
+    try expectMovesFrom(&list, 28, expected, board.occupancy[@backingInt(Color.black)]);
+}
+
+test "sliderMoves handles multiple sliders of the same type" {
+    var board = brd.empty;
+    board.setPiece(.white, .rook, 0); // a1
+    board.setPiece(.white, .rook, 63); // h8
+
+    var list = MoveList{};
+    sliderMoves(&board, .white, .rook, &list);
+
+    const a1_expected = squareBit(8) | squareBit(16) | squareBit(24) | squareBit(32) |
+        squareBit(40) | squareBit(48) | squareBit(56) | // a2-a8
+        squareBit(1) | squareBit(2) | squareBit(3) | squareBit(4) |
+        squareBit(5) | squareBit(6) | squareBit(7); // b1-h1
+
+    const h8_expected = squareBit(55) | squareBit(47) | squareBit(39) | squareBit(31) |
+        squareBit(23) | squareBit(15) | squareBit(7) | // h7-h1
+        squareBit(62) | squareBit(61) | squareBit(60) | squareBit(59) |
+        squareBit(58) | squareBit(57) | squareBit(56); // g8-a8
+
+    try std.testing.expectEqual(@as(u16, 28), list.count);
+    try expectMovesFrom(&list, 0, a1_expected, 0);
+    try expectMovesFrom(&list, 63, h8_expected, 0);
+}
+
+test "sliderMoves generates nothing when the side has no sliders" {
+    var board = brd.empty;
+    board.setPiece(.white, .knight, 28);
+    board.setPiece(.black, .rook, 0);
+
+    var rook_list = MoveList{};
+    sliderMoves(&board, .white, .rook, &rook_list);
+    try std.testing.expectEqual(@as(u16, 0), rook_list.count);
+
+    var queen_list = MoveList{};
+    sliderMoves(&board, .white, .queen, &queen_list);
+    try std.testing.expectEqual(@as(u16, 0), queen_list.count);
+}
+
+test "sliderMoves matches direct slider attacks on random boards (fixed seed)" {
+    var prng = std.Random.DefaultPrng.init(0xD1CE_5EED_1234_5678);
+    const random = prng.random();
+    const colors = [_]Color{ .white, .black };
+
+    var iteration: usize = 0;
+    while (iteration < 300) : (iteration += 1) {
+        var board = brd.empty;
+        var occupied: u64 = 0;
+
+        // At most 8 pieces keeps the maximum possible move count below MoveList's capacity.
+        const piece_count = random.intRangeAtMost(usize, 0, 8);
+        var placed: usize = 0;
+        while (placed < piece_count) {
+            const sq: brd.Square = random.int(brd.Square);
+            const bit = squareBit(sq);
+            if (occupied & bit != 0) continue;
+
+            occupied |= bit;
+            const color: Color = if (random.boolean()) .white else .black;
+            const piece: Piece = @fromBackingInt(@intCast(random.uintLessThan(u8, 6)));
+            board.setPiece(color, piece, sq);
+            placed += 1;
+        }
+
+        for (colors) |color| {
+            try checkSliderMoves(&board, color, .bishop);
+            try checkSliderMoves(&board, color, .rook);
+            try checkSliderMoves(&board, color, .queen);
         }
     }
 }
