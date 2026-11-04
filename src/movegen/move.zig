@@ -2,6 +2,9 @@ const std = @import("std");
 const fen = @import("../fen.zig");
 const brd = @import("../board.zig");
 const query = @import("../attacks/query.zig");
+const leaper_gen = @import("../movegen/leaper.zig");
+const pawn_gen = @import("../movegen/pawn.zig");
+const slider_gen = @import("../movegen/slider.zig");
 
 const Piece = brd.Piece;
 
@@ -201,6 +204,34 @@ pub fn makeMoveIfLegal(board: *const brd.Board, move: Move) ?brd.Board {
         return null;
     }
     return next;
+}
+
+pub fn generateMoves(board: *const brd.Board, list: *MoveList) void {
+    const color = board.side_to_move;
+    const pushes = pawn_gen.generatePawnPushes(board, color);
+    pawn_gen.singlePawnPushesToMoves(pushes.single, color, list);
+    pawn_gen.doublePawnPushesToMoves(pushes.double, color, list);
+    pawn_gen.pawnCapturesToMoves(board, color, list);
+
+    leaper_gen.leaperMoves(board, color, .king, list);
+    leaper_gen.leaperMoves(board, color, .knight, list);
+
+    slider_gen.sliderMoves(board, color, .bishop, list);
+    slider_gen.sliderMoves(board, color, .rook, list);
+    slider_gen.sliderMoves(board, color, .queen, list);
+}
+
+pub fn perft(board: *const brd.Board, depth: u32) u64 {
+    if (depth == 0) return 1;
+    var nodes: u64 = 0;
+    var list = MoveList{};
+    generateMoves(board, &list);
+    for (list.moves[0..list.count]) |move| {
+        if (makeMoveIfLegal(board, move)) |next| {
+            nodes += perft(&next, depth - 1);
+        }
+    }
+    return nodes;
 }
 
 test "Move size is 2 bytes" {
@@ -631,4 +662,55 @@ test "makeMoveIfLegal accepts king escapes and captures of the checking piece" {
         .{ .from = 8, .to = 12, .flags = .capture }, // Ra2xe2
         "k7/8/8/8/8/8/4R3/4K3 b - - 0 1",
     );
+}
+
+test "perft from starting position through depth 4" {
+    const starting_position = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    try std.testing.expectEqual(@as(u64, 1), perft(&starting_position, 0));
+    try std.testing.expectEqual(@as(u64, 20), perft(&starting_position, 1));
+    try std.testing.expectEqual(@as(u64, 400), perft(&starting_position, 2));
+    try std.testing.expectEqual(@as(u64, 8902), perft(&starting_position, 3));
+    try std.testing.expectEqual(@as(u64, 197281), perft(&starting_position, 4));
+}
+
+test "perft on a castling-free endgame position through depth 4" {
+    // ChessProgramming perft position 3. It has no castling rights, so the
+    // standard counts are valid even though castling generation is not done yet.
+    const position = try fen.parseFen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
+
+    try std.testing.expectEqual(@as(u64, 14), perft(&position, 1));
+    try std.testing.expectEqual(@as(u64, 191), perft(&position, 2));
+    try std.testing.expectEqual(@as(u64, 2812), perft(&position, 3));
+    try std.testing.expectEqual(@as(u64, 43238), perft(&position, 4));
+}
+
+test "perft on a castling-free middlegame position through depth 3" {
+    // ChessProgramming perft position 6. Both kings have already castled and
+    // there are no castling rights, so the standard counts apply here.
+    const position = try fen.parseFen("r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10");
+
+    try std.testing.expectEqual(@as(u64, 46), perft(&position, 1));
+    try std.testing.expectEqual(@as(u64, 2079), perft(&position, 2));
+    try std.testing.expectEqual(@as(u64, 89890), perft(&position, 3));
+}
+
+test "perft on promotion-heavy position 4 with no castling rights through depth 4" {
+    // ChessProgramming perft position 4, with black's castling rights removed.
+    const position = try fen.parseFen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w - - 0 1");
+
+    try std.testing.expectEqual(@as(u64, 6), perft(&position, 1));
+    try std.testing.expectEqual(@as(u64, 258), perft(&position, 2));
+    try std.testing.expectEqual(@as(u64, 9221), perft(&position, 3));
+    try std.testing.expectEqual(@as(u64, 404587), perft(&position, 4));
+}
+
+test "perft on promotion-heavy position 5 with no castling rights through depth 4" {
+    // ChessProgramming perft position 5, with white's castling rights removed.
+    const position = try fen.parseFen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w - - 1 8");
+
+    try std.testing.expectEqual(@as(u64, 43), perft(&position, 1));
+    try std.testing.expectEqual(@as(u64, 1452), perft(&position, 2));
+    try std.testing.expectEqual(@as(u64, 59922), perft(&position, 3));
+    try std.testing.expectEqual(@as(u64, 2018609), perft(&position, 4));
 }
