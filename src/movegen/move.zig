@@ -1,5 +1,7 @@
 const std = @import("std");
+const fen = @import("../fen.zig");
 const brd = @import("../board.zig");
+const query = @import("../attacks/query.zig");
 
 const Piece = brd.Piece;
 
@@ -58,6 +60,12 @@ pub const MoveList = struct {
     }
 };
 
+pub const IllegalMove = error{
+    InvalidFrom,
+    InvalidTo,
+    KingInCheck,
+};
+
 const quiet_promotion_flags = [_]MoveFlags{
     .knight_promotion,
     .bishop_promotion,
@@ -106,6 +114,93 @@ pub fn addMovesFromTargets(move_list: *MoveList, from: brd.Square, targets: u64,
             .flags = .capture,
         });
     }
+}
+
+pub fn makeMove(old_board: *const brd.Board, move: Move) brd.Board {
+    var new_board: brd.Board = old_board.*;
+    const mover = old_board.pieceAt(move.from);
+    std.debug.assert(mover != null);
+    const mover_color = mover.?.color;
+    const mover_piece = mover.?.piece;
+
+    // remove captured piece, if there is one
+    if (move.flags == .en_passant_capture) {
+        const location = if (mover_color == .white) move.to - 8 else move.to + 8;
+        new_board.removePiece(mover_color.opposite(), .pawn, location);
+    } else if (move.flags.isCapture()) {
+        const captured_piece = old_board.pieceAt(move.to);
+        std.debug.assert(captured_piece != null);
+        new_board.removePiece(captured_piece.?.color, captured_piece.?.piece, move.to);
+    }
+
+    // move piece from 'from' to 'to', accounting for promotion
+    new_board.removePiece(mover_color, mover_piece, move.from);
+    if (move.flags.isPromotion()) {
+        std.debug.assert(move.flags.piecePromoted() != null);
+        new_board.setPiece(mover_color, move.flags.piecePromoted().?, move.to);
+    } else {
+        new_board.setPiece(mover_color, mover_piece, move.to);
+    }
+
+    // move rook when castling
+    if (move.flags == .kingside_castle) {
+        // white kingside castle: rook goes from h1 (7) to f1 (5)
+        if (mover_color == .white) {
+            new_board.removePiece(.white, .rook, 7);
+            new_board.setPiece(.white, .rook, 5);
+        } else { // black kingside castle: rook goes from h8 (63) to f8 (61)
+            new_board.removePiece(.black, .rook, 63);
+            new_board.setPiece(.black, .rook, 61);
+        }
+    } else if (move.flags == .queenside_castle) {
+        // white queenside castle: rook goes from a1 (0) to d1 (3)
+        if (mover_color == .white) {
+            new_board.removePiece(.white, .rook, 0);
+            new_board.setPiece(.white, .rook, 3);
+        } else { // black queenside castle: rook goes from a8 (56) to d8 (59)
+            new_board.removePiece(.black, .rook, 56);
+            new_board.setPiece(.black, .rook, 59);
+        }
+    }
+
+    // clear castling rights if rook was captured or moved, or if king was moved
+    new_board.castling_rights &= brd.castling_mask[move.from] & brd.castling_mask[move.to];
+
+    // set en passant
+    if (move.flags == .double_pawn_push) {
+        new_board.en_passant = if (mover_color == .white) move.to - 8 else move.to + 8;
+    } else {
+        new_board.en_passant = null;
+    }
+
+    // if pawn move or capture, reset halfmove clock, otherwise increment it
+    if (mover_piece == .pawn or move.flags.isCapture()) {
+        new_board.halfmove_clock = 0;
+    } else {
+        new_board.halfmove_clock +|= 1; // saturating add, won't go beyond 255
+    }
+
+    // increment side to move after black's turn
+    if (mover_color == .black) {
+        new_board.fullmove_number += 1;
+    }
+
+    // flip side to move
+    new_board.side_to_move = mover_color.opposite();
+
+    return new_board;
+}
+
+pub fn makeMoveIfLegal(board: *const brd.Board, move: Move) ?brd.Board {
+    const next = makeMove(board, move);
+    const mover = board.pieceAt(move.from);
+    std.debug.assert(board.getBoard(mover.?.color, .king) != 0);
+
+    const king_position: brd.Square = @intCast(@ctz(next.getBoard(mover.?.color, .king)));
+    if (query.isSquareAttacked(&next, king_position, mover.?.color.opposite())) {
+        return null;
+    }
+    return next;
 }
 
 test "Move size is 2 bytes" {
@@ -209,4 +304,331 @@ test "MoveList starts empty and adds three moves" {
     try std.testing.expectEqual(m1, list.moves[0]);
     try std.testing.expectEqual(m2, list.moves[1]);
     try std.testing.expectEqual(m3, list.moves[2]);
+}
+
+fn expectMoveResult(start_fen: []const u8, move: Move, expected_fen: []const u8) !void {
+    const start = try fen.parseFen(start_fen);
+    const actual = makeMove(&start, move);
+    const expected = try fen.parseFen(expected_fen);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+fn expectLegalMoveResult(start_fen: []const u8, move: Move, expected_fen: []const u8) !void {
+    const start = try fen.parseFen(start_fen);
+    const actual = makeMoveIfLegal(&start, move) orelse return error.TestUnexpectedResult;
+    const expected = try fen.parseFen(expected_fen);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+fn expectIllegalMove(start_fen: []const u8, move: Move) !void {
+    const start = try fen.parseFen(start_fen);
+    try std.testing.expect(makeMoveIfLegal(&start, move) == null);
+}
+
+test "makeMove applies quiet moves and updates clocks and side to move" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/8/8/8/8/4K1N1 w - - 0 1",
+            .move = .{ .from = 6, .to = 21, .flags = .quiet_move }, // Ng1-f3
+            .expected = "4k3/8/8/8/8/5N2/8/4K3 b - - 1 1",
+        },
+        .{
+            .start = "4k1n1/8/8/8/8/8/8/4K3 b - - 0 1",
+            .move = .{ .from = 62, .to = 45, .flags = .quiet_move }, // Ng8-f6
+            .expected = "4k3/8/5n2/8/8/8/8/4K3 w - - 1 2",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove applies double pawn pushes and sets en passant" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+            .move = .{ .from = 12, .to = 28, .flags = .double_pawn_push }, // e2-e4
+            .expected = "4k3/8/8/8/4P3/8/8/4K3 b - e3 0 1",
+        },
+        .{
+            .start = "4k3/4p3/8/8/8/8/8/4K3 b - - 0 1",
+            .move = .{ .from = 52, .to = 36, .flags = .double_pawn_push }, // e7-e5
+            .expected = "4k3/8/8/4p3/8/8/8/4K3 w - e6 0 2",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove applies captures and resets the halfmove clock" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/4p3/8/4R3/8/8/4K3 w - - 0 1",
+            .move = .{ .from = 28, .to = 44, .flags = .capture }, // Re4xe6
+            .expected = "4k3/8/4R3/8/8/8/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "4k3/8/8/3p4/2P5/8/8/4K3 b - - 0 1",
+            .move = .{ .from = 35, .to = 26, .flags = .capture }, // pd5xc4
+            .expected = "4k3/8/8/8/2p5/8/8/4K3 w - - 0 2",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove applies en passant captures" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            .move = .{ .from = 36, .to = 43, .flags = .en_passant_capture }, // e5xd6 e.p.
+            .expected = "4k3/8/3P4/8/8/8/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 1",
+            .move = .{ .from = 27, .to = 20, .flags = .en_passant_capture }, // d4xe3 e.p.
+            .expected = "4k3/8/8/8/8/4p3/8/4K3 w - - 0 2",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove applies quiet promotions to every piece" {
+    const start_fen = "k7/4P3/8/8/8/8/8/7K w - - 0 1";
+    const cases = [_]struct { flag: MoveFlags, expected: []const u8 }{
+        .{ .flag = .knight_promotion, .expected = "k3N3/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .bishop_promotion, .expected = "k3B3/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .rook_promotion, .expected = "k3R3/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .queen_promotion, .expected = "k3Q3/8/8/8/8/8/8/7K b - - 0 1" },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(start_fen, .{ .from = 52, .to = 60, .flags = case.flag }, case.expected);
+    }
+}
+
+test "makeMove applies capture promotions to every piece" {
+    const start_fen = "k2r4/4P3/8/8/8/8/8/7K w - - 0 1";
+    const cases = [_]struct { flag: MoveFlags, expected: []const u8 }{
+        .{ .flag = .knight_promotion_capture, .expected = "k2N4/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .bishop_promotion_capture, .expected = "k2B4/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .rook_promotion_capture, .expected = "k2R4/8/8/8/8/8/8/7K b - - 0 1" },
+        .{ .flag = .queen_promotion_capture, .expected = "k2Q4/8/8/8/8/8/8/7K b - - 0 1" },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(start_fen, .{ .from = 52, .to = 59, .flags = case.flag }, case.expected);
+    }
+}
+
+test "makeMove applies white kingside castling" {
+    try expectMoveResult(
+        "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        .{ .from = 4, .to = 6, .flags = .kingside_castle }, // e1-g1
+        "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1",
+    );
+}
+
+test "makeMove applies white queenside castling" {
+    try expectMoveResult(
+        "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        .{ .from = 4, .to = 2, .flags = .queenside_castle }, // e1-c1
+        "r3k2r/8/8/8/8/8/8/2KR3R b kq - 1 1",
+    );
+}
+
+test "makeMove applies black kingside castling" {
+    try expectMoveResult(
+        "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        .{ .from = 60, .to = 62, .flags = .kingside_castle }, // e8-g8
+        "r4rk1/8/8/8/8/8/8/R3K2R w KQ - 1 2",
+    );
+}
+
+test "makeMove applies black queenside castling" {
+    try expectMoveResult(
+        "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        .{ .from = 60, .to = 58, .flags = .queenside_castle }, // e8-c8
+        "2kr3r/8/8/8/8/8/8/R3K2R w KQ - 1 2",
+    );
+}
+
+test "makeMove clears castling rights when kings and rooks move or are captured" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+            .move = .{ .from = 4, .to = 12, .flags = .quiet_move }, // Ke1-e2
+            .expected = "r3k2r/8/8/8/8/8/4K3/R6R b kq - 1 1",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+            .move = .{ .from = 0, .to = 8, .flags = .quiet_move }, // Ra1-a2
+            .expected = "r3k2r/8/8/8/8/8/R7/4K2R b Kkq - 1 1",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+            .move = .{ .from = 60, .to = 52, .flags = .quiet_move }, // Ke8-e7
+            .expected = "r6r/4k3/8/8/8/8/8/R3K2R w KQ - 1 2",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+            .move = .{ .from = 63, .to = 7, .flags = .capture }, // Rh8xh1
+            .expected = "r3k3/8/8/8/8/8/8/R3K2r w Qq - 0 2",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+            .move = .{ .from = 56, .to = 0, .flags = .capture }, // Ra8xa1
+            .expected = "4k2r/8/8/8/8/8/8/r3K2R w Kk - 0 2",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove clears en passant after quiet, capture, promotion, and castling moves" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            .move = .{ .from = 4, .to = 12, .flags = .quiet_move }, // Ke1-e2
+            .expected = "4k3/8/8/3pP3/8/8/4K3/8 b - - 1 1",
+        },
+        .{
+            .start = "r3k3/8/8/8/8/8/8/R3K3 w - d6 0 1",
+            .move = .{ .from = 0, .to = 56, .flags = .capture }, // Ra1xa8
+            .expected = "R3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "k7/4P3/8/8/8/8/8/7K w - d6 0 1",
+            .move = .{ .from = 52, .to = 60, .flags = .queen_promotion }, // e7-e8=Q
+            .expected = "k3Q3/8/8/8/8/8/8/7K b - - 0 1",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq d6 0 1",
+            .move = .{ .from = 4, .to = 6, .flags = .kingside_castle }, // O-O
+            .expected = "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMove applies black quiet promotions to every piece" {
+    const start_fen = "k7/8/8/8/8/8/4p3/7K b - - 0 1";
+    const cases = [_]struct { flag: MoveFlags, expected: []const u8 }{
+        .{ .flag = .knight_promotion, .expected = "k7/8/8/8/8/8/8/4n2K w - - 0 2" },
+        .{ .flag = .bishop_promotion, .expected = "k7/8/8/8/8/8/8/4b2K w - - 0 2" },
+        .{ .flag = .rook_promotion, .expected = "k7/8/8/8/8/8/8/4r2K w - - 0 2" },
+        .{ .flag = .queen_promotion, .expected = "k7/8/8/8/8/8/8/4q2K w - - 0 2" },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(start_fen, .{ .from = 12, .to = 4, .flags = case.flag }, case.expected);
+    }
+}
+
+test "makeMove applies black capture promotions to every piece" {
+    const start_fen = "k7/8/8/8/8/8/4p3/3R3K b - - 0 1";
+    const cases = [_]struct { flag: MoveFlags, expected: []const u8 }{
+        .{ .flag = .knight_promotion_capture, .expected = "k7/8/8/8/8/8/8/3n3K w - - 0 2" },
+        .{ .flag = .bishop_promotion_capture, .expected = "k7/8/8/8/8/8/8/3b3K w - - 0 2" },
+        .{ .flag = .rook_promotion_capture, .expected = "k7/8/8/8/8/8/8/3r3K w - - 0 2" },
+        .{ .flag = .queen_promotion_capture, .expected = "k7/8/8/8/8/8/8/3q3K w - - 0 2" },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(start_fen, .{ .from = 12, .to = 3, .flags = case.flag }, case.expected);
+    }
+}
+
+test "makeMove increments the halfmove clock and saturates at 255" {
+    const cases = [_]struct { start: []const u8, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/8/8/8/8/4K1N1 w - - 41 1",
+            .expected = "4k3/8/8/8/8/5N2/8/4K3 b - - 42 1",
+        },
+        .{
+            .start = "4k3/8/8/8/8/8/8/4K1N1 w - - 255 1",
+            .expected = "4k3/8/8/8/8/5N2/8/4K3 b - - 255 1",
+        },
+    };
+
+    const move = Move{ .from = 6, .to = 21, .flags = .quiet_move }; // Ng1-f3
+    for (cases) |case| {
+        try expectMoveResult(case.start, move, case.expected);
+    }
+}
+
+test "makeMove resets the halfmove clock for pawn moves, captures, en passant, and promotions" {
+    const cases = [_]struct { start: []const u8, move: Move, expected: []const u8 }{
+        .{
+            .start = "4k3/8/8/8/8/8/4P3/4K3 w - - 41 1",
+            .move = .{ .from = 12, .to = 20, .flags = .quiet_move }, // e2-e3
+            .expected = "4k3/8/8/8/8/4P3/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "4k3/8/4p3/8/4R3/8/8/4K3 w - - 41 1",
+            .move = .{ .from = 28, .to = 44, .flags = .capture }, // Re4xe6
+            .expected = "4k3/8/4R3/8/8/8/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 41 1",
+            .move = .{ .from = 36, .to = 43, .flags = .en_passant_capture }, // e5xd6 e.p.
+            .expected = "4k3/8/3P4/8/8/8/8/4K3 b - - 0 1",
+        },
+        .{
+            .start = "k7/4P3/8/8/8/8/8/7K w - - 41 1",
+            .move = .{ .from = 52, .to = 60, .flags = .queen_promotion }, // e7-e8=Q
+            .expected = "k3Q3/8/8/8/8/8/8/7K b - - 0 1",
+        },
+    };
+
+    for (cases) |case| {
+        try expectMoveResult(case.start, case.move, case.expected);
+    }
+}
+
+test "makeMoveIfLegal accepts a legal move" {
+    try expectLegalMoveResult(
+        "4k3/8/8/8/8/8/8/4K1N1 w - - 0 1",
+        .{ .from = 6, .to = 21, .flags = .quiet_move }, // Ng1-f3
+        "4k3/8/8/8/8/5N2/8/4K3 b - - 1 1",
+    );
+}
+
+test "makeMoveIfLegal rejects moves that expose or move the king into check" {
+    try expectIllegalMove(
+        "k3r3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+        .{ .from = 12, .to = 13, .flags = .quiet_move }, // Re2-f2 exposes Ke1 to Re8
+    );
+
+    try expectIllegalMove(
+        "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
+        .{ .from = 4, .to = 12, .flags = .quiet_move }, // Ke1-e2 moves onto the e-file
+    );
+}
+
+test "makeMoveIfLegal accepts king escapes and captures of the checking piece" {
+    try expectLegalMoveResult(
+        "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
+        .{ .from = 4, .to = 3, .flags = .quiet_move }, // Ke1-d1
+        "k3r3/8/8/8/8/8/8/3K4 b - - 1 1",
+    );
+
+    try expectLegalMoveResult(
+        "k7/8/8/8/8/8/R3r3/4K3 w - - 0 1",
+        .{ .from = 8, .to = 12, .flags = .capture }, // Ra2xe2
+        "k7/8/8/8/8/8/4R3/4K3 b - - 0 1",
+    );
 }
