@@ -108,6 +108,7 @@ fn parseHalfmoveClock(board: *brd.Board, halfmove_clock: []const u8) InvalidFen!
 /// Counter must be a number.
 fn parseFullmoveCounter(board: *brd.Board, fullmove_counter: []const u8) InvalidFen!void {
     const count: u16 = std.fmt.parseUnsigned(u16, fullmove_counter, 10) catch return InvalidFen.InvalidFullmoveCounter;
+    if (count == 0) return InvalidFen.InvalidFullmoveCounter;
     board.fullmove_number = count;
 }
 
@@ -300,6 +301,7 @@ test "rejects invalid FENs" {
         .{ .fen = start ++ " w KQkq - a 1", .err = InvalidFen.InvalidHalfmoveClock },
         .{ .fen = start ++ " w KQkq - 256 1", .err = InvalidFen.InvalidHalfmoveClock }, // overflows u8
         .{ .fen = start ++ " w KQkq - 0 -1", .err = InvalidFen.InvalidFullmoveCounter },
+        .{ .fen = start ++ " w KQkq - 0 0", .err = InvalidFen.InvalidFullmoveCounter }, // must start at 1
         .{ .fen = start ++ " w KQkq - 0 70000", .err = InvalidFen.InvalidFullmoveCounter }, // overflows u16
     };
 

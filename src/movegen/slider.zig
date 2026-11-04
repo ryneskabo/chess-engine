@@ -7,7 +7,6 @@ const Board = brd.Board;
 const Color = brd.Color;
 const Piece = brd.Piece;
 
-const Move = move.Move;
 const MoveFlags = move.MoveFlags;
 const MoveList = move.MoveList;
 const addMovesFromTargets = move.addMovesFromTargets;

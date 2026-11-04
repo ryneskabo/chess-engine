@@ -1,7 +1,7 @@
 const std = @import("std");
 const fen = @import("../fen.zig");
 const brd = @import("../board.zig");
-const att = @import("../attacks.zig");
+const att = @import("../attacks/leapers.zig");
 const move = @import("move.zig");
 
 const Board = brd.Board;

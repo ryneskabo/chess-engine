@@ -1,5 +1,6 @@
 pub const leapers = @import("attacks/leapers.zig");
 pub const sliders = @import("attacks/sliders.zig");
+pub const query = @import("attacks/query.zig");
 
 pub const knight_attacks = leapers.knight_attacks;
 pub const king_attacks = leapers.king_attacks;
@@ -12,3 +13,4 @@ pub const rayAttacks = sliders.rayAttacks;
 pub const rookAttacks = sliders.rookAttacks;
 pub const bishopAttacks = sliders.bishopAttacks;
 pub const queenAttacks = sliders.queenAttacks;
+pub const isSquareAttacked = query.isSquareAttacked;

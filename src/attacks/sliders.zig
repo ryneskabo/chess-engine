@@ -62,7 +62,8 @@ pub fn rayAttacks(comptime direction: RayDirection, from: brd.Square, occupancy:
 
     if (blockers == 0) return ray_table[dir][from]; // if no blocker, return whole ray, preventing overflow on the following @intCast and preventing underflow in following 63 - @clz
 
-    const first_blocker: brd.Square = if (dir < 4) @intCast(@ctz(blockers)) else @intCast(63 - @clz(blockers)); // use @ctz to get the first blocker when going 'up' the bitboard; when going down, use @clz
+    // Directions 0-3 move toward higher square indices; 4-7 move toward lower indices.
+    const first_blocker: brd.Square = if (dir < 4) @intCast(@ctz(blockers)) else @intCast(63 - @clz(blockers));
     return ray_table[dir][from] ^ ray_table[dir][first_blocker];
 }
 

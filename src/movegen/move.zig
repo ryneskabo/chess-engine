@@ -35,7 +35,7 @@ pub const MoveFlags = enum(u4) {
             0b0001 => .bishop,
             0b0010 => .rook,
             0b0011 => .queen,
-            else => unreachable, // verify this
+            else => unreachable, // All promotion flags encode one of the four piece bits.
         };
     }
 };
