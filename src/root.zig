@@ -1,3 +1,8 @@
+pub const board = @import("board.zig");
+pub const fen = @import("fen.zig");
+pub const attacks = @import("attacks.zig");
+pub const movegen = @import("movegen.zig");
+
 test {
     _ = @import("board.zig");
     _ = @import("fen.zig");

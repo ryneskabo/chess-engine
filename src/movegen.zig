@@ -7,6 +7,10 @@ pub const MoveFlags = move.MoveFlags;
 pub const Move = move.Move;
 pub const MoveList = move.MoveList;
 pub const addMovesFromTargets = move.addMovesFromTargets;
+pub const generateMoves = move.generateMoves;
+pub const makeMove = move.makeMove;
+pub const makeMoveIfLegal = move.makeMoveIfLegal;
+pub const perft = move.perft;
 
 pub const generatePawnPushes = pawn.generatePawnPushes;
 pub const singlePawnPushesToMoves = pawn.singlePawnPushesToMoves;

@@ -119,6 +119,84 @@ pub fn addMovesFromTargets(move_list: *MoveList, from: brd.Square, targets: u64,
     }
 }
 
+fn anySquareAttacked(board: *const brd.Board, squares: u64, by_color: brd.Color) bool {
+    var remaining = squares;
+    while (remaining != 0) : (remaining &= remaining - 1) {
+        const square: brd.Square = @intCast(@ctz(remaining));
+        if (query.isSquareAttacked(board, square, by_color)) return true;
+    }
+    return false;
+}
+
+fn castlingMoves(board: *const brd.Board, color: brd.Color, list: *MoveList) void {
+    if (board.castling_rights == 0) return;
+
+    const king_from: brd.Square = if (color == .white) 4 else 60;
+    if (board.getBoard(color, .king) & brd.squareBit(king_from) == 0) return;
+
+    const occupancy = board.occupancy[@backingInt(brd.Color.white)] | board.occupancy[@backingInt(brd.Color.black)];
+    const rooks = board.getBoard(color, .rook);
+    const enemy = color.opposite();
+
+    const Config = struct {
+        right: brd.CastlingRights,
+        rook_from: brd.Square,
+        king_to: brd.Square,
+        empty_squares: u64,
+        safe_squares: u64,
+        flags: MoveFlags,
+    };
+
+    const configs = if (color == .white) [_]Config{
+        .{
+            .right = brd.white_kingside,
+            .rook_from = 7,
+            .king_to = 6,
+            .empty_squares = brd.squareBit(5) | brd.squareBit(6),
+            .safe_squares = brd.squareBit(4) | brd.squareBit(5) | brd.squareBit(6),
+            .flags = .kingside_castle,
+        },
+        .{
+            .right = brd.white_queenside,
+            .rook_from = 0,
+            .king_to = 2,
+            .empty_squares = brd.squareBit(1) | brd.squareBit(2) | brd.squareBit(3),
+            .safe_squares = brd.squareBit(2) | brd.squareBit(3) | brd.squareBit(4),
+            .flags = .queenside_castle,
+        },
+    } else [_]Config{
+        .{
+            .right = brd.black_kingside,
+            .rook_from = 63,
+            .king_to = 62,
+            .empty_squares = brd.squareBit(61) | brd.squareBit(62),
+            .safe_squares = brd.squareBit(60) | brd.squareBit(61) | brd.squareBit(62),
+            .flags = .kingside_castle,
+        },
+        .{
+            .right = brd.black_queenside,
+            .rook_from = 56,
+            .king_to = 58,
+            .empty_squares = brd.squareBit(57) | brd.squareBit(58) | brd.squareBit(59),
+            .safe_squares = brd.squareBit(58) | brd.squareBit(59) | brd.squareBit(60),
+            .flags = .queenside_castle,
+        },
+    };
+
+    for (configs) |config| {
+        if (board.castling_rights & config.right == 0) continue;
+        if (rooks & brd.squareBit(config.rook_from) == 0) continue;
+        if (occupancy & config.empty_squares != 0) continue;
+        if (anySquareAttacked(board, config.safe_squares, enemy)) continue;
+
+        list.add(.{
+            .from = king_from,
+            .to = config.king_to,
+            .flags = config.flags,
+        });
+    }
+}
+
 pub fn makeMove(old_board: *const brd.Board, move: Move) brd.Board {
     var new_board: brd.Board = old_board.*;
     const mover = old_board.pieceAt(move.from);
@@ -219,6 +297,8 @@ pub fn generateMoves(board: *const brd.Board, list: *MoveList) void {
     slider_gen.sliderMoves(board, color, .bishop, list);
     slider_gen.sliderMoves(board, color, .rook, list);
     slider_gen.sliderMoves(board, color, .queen, list);
+
+    castlingMoves(board, color, list);
 }
 
 pub fn perft(board: *const brd.Board, depth: u32) u64 {
@@ -505,9 +585,19 @@ test "makeMove clears castling rights when kings and rooks move or are captured"
             .expected = "r3k2r/8/8/8/8/8/R7/4K2R b Kkq - 1 1",
         },
         .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+            .move = .{ .from = 7, .to = 15, .flags = .quiet_move }, // Rh1-h2
+            .expected = "r3k2r/8/8/8/8/8/7R/R3K3 b Qkq - 1 1",
+        },
+        .{
             .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
             .move = .{ .from = 60, .to = 52, .flags = .quiet_move }, // Ke8-e7
             .expected = "r6r/4k3/8/8/8/8/8/R3K2R w KQ - 1 2",
+        },
+        .{
+            .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+            .move = .{ .from = 56, .to = 48, .flags = .quiet_move }, // Ra8-a7
+            .expected = "4k2r/r7/8/8/8/8/8/R3K2R w KQk - 1 2",
         },
         .{
             .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
@@ -518,6 +608,11 @@ test "makeMove clears castling rights when kings and rooks move or are captured"
             .start = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
             .move = .{ .from = 56, .to = 0, .flags = .capture }, // Ra8xa1
             .expected = "4k2r/8/8/8/8/8/8/r3K2R w Kk - 0 2",
+        },
+        .{
+            .start = "4k2r/8/6N1/8/8/8/8/4K3 w kq - 0 1",
+            .move = .{ .from = 46, .to = 63, .flags = .capture }, // Ng6xh8
+            .expected = "4k2N/8/8/8/8/8/8/4K3 b q - 0 1",
         },
     };
 
@@ -664,6 +759,121 @@ test "makeMoveIfLegal accepts king escapes and captures of the checking piece" {
     );
 }
 
+fn hasMove(list: *const MoveList, move: Move) bool {
+    for (list.moves[0..list.count]) |candidate| {
+        if (candidate == move) return true;
+    }
+    return false;
+}
+
+fn expectCastlingAvailability(board: *const brd.Board, color: brd.Color, kingside: bool, queenside: bool) !void {
+    var list = MoveList{};
+    generateMoves(board, &list);
+
+    const king_from: brd.Square = if (color == .white) 4 else 60;
+    const kingside_to: brd.Square = if (color == .white) 6 else 62;
+    const queenside_to: brd.Square = if (color == .white) 2 else 58;
+
+    try std.testing.expectEqual(kingside, hasMove(&list, .{ .from = king_from, .to = kingside_to, .flags = .kingside_castle }));
+    try std.testing.expectEqual(queenside, hasMove(&list, .{ .from = king_from, .to = queenside_to, .flags = .queenside_castle }));
+}
+
+test "generateMoves adds all four castling moves in an open position" {
+    const white_board = try fen.parseFen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+    try expectCastlingAvailability(&white_board, .white, true, true);
+
+    const black_board = try fen.parseFen("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1");
+    try expectCastlingAvailability(&black_board, .black, true, true);
+}
+
+test "castlingMoves is blocked by a piece of either color in every castle path" {
+    const cases = [_]struct {
+        fen: []const u8,
+        color: brd.Color,
+        kingside: bool,
+        queenside: bool,
+    }{
+        // White kingside blocked on f1 by a friendly or enemy knight.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3KN1R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3Kn1R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        // White queenside blocked on b1 by a friendly or enemy knight.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/RN2K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/Rn2K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        // Black kingside blocked on f8 by a friendly or enemy knight.
+        .{ .fen = "r3kN1r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        .{ .fen = "r3kn1r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        // Black queenside blocked on b8 by a friendly or enemy knight.
+        .{ .fen = "rN2k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        .{ .fen = "rn2k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+    };
+
+    for (cases) |case| {
+        const board = try fen.parseFen(case.fen);
+        try expectCastlingAvailability(&board, case.color, case.kingside, case.queenside);
+    }
+}
+
+test "castlingMoves requires rights and the rook on its home square" {
+    const cases = [_]struct {
+        fen: []const u8,
+        color: brd.Color,
+        kingside: bool,
+        queenside: bool,
+    }{
+        // Rights are present, but the corresponding rook is missing.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3K3 w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/4K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        .{ .fen = "r3k3/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        .{ .fen = "4k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        // No castling rights at all.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1", .color = .white, .kingside = false, .queenside = false },
+        // Starting position has rights, but both paths are blocked.
+        .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .color = .white, .kingside = false, .queenside = false },
+    };
+
+    for (cases) |case| {
+        const board = try fen.parseFen(case.fen);
+        try expectCastlingAvailability(&board, case.color, case.kingside, case.queenside);
+    }
+}
+
+test "castlingMoves rejects check and attacked king paths" {
+    const cases = [_]struct {
+        fen: []const u8,
+        color: brd.Color,
+        kingside: bool,
+        queenside: bool,
+    }{
+        // White king is in check on e1.
+        .{ .fen = "r3k2r/8/8/8/8/8/4r3/R3K2R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = false },
+        // White king cannot pass through f1.
+        .{ .fen = "r3kr2/8/8/8/8/8/8/R3K2R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        // White king cannot pass through d1.
+        .{ .fen = "r2rk3/8/8/8/8/8/8/R3K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        // White king cannot land on g1.
+        .{ .fen = "r3k1r1/8/8/8/8/8/8/R3K2R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        // White king cannot land on c1.
+        .{ .fen = "r1r1k3/8/8/8/8/8/8/R3K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        // Only b1 is attacked, so queenside castling is still legal.
+        .{ .fen = "1r2k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", .color = .white, .kingside = true, .queenside = true },
+        // Only the rook squares are attacked, which does not prevent castling.
+        .{ .fen = "rr2k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = true },
+        // Black king is in check on e8.
+        .{ .fen = "r3k2r/8/8/8/8/8/4R3/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = false },
+        // Black king cannot pass through f8.
+        .{ .fen = "r3k2r/8/8/8/8/8/5R2/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        // Black king cannot land on g8.
+        .{ .fen = "r3k2r/8/8/8/8/8/6R1/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        // Black king cannot land on c8.
+        .{ .fen = "r3k2r/8/8/8/8/8/2R5/R3K3 b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+    };
+
+    for (cases) |case| {
+        const board = try fen.parseFen(case.fen);
+        try expectCastlingAvailability(&board, case.color, case.kingside, case.queenside);
+    }
+}
+
 test "perft from starting position through depth 4" {
     const starting_position = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 
@@ -675,8 +885,7 @@ test "perft from starting position through depth 4" {
 }
 
 test "perft on a castling-free endgame position through depth 4" {
-    // ChessProgramming perft position 3. It has no castling rights, so the
-    // standard counts are valid even though castling generation is not done yet.
+    // ChessProgramming perft position 3. It has no castling rights.
     const position = try fen.parseFen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
 
     try std.testing.expectEqual(@as(u64, 14), perft(&position, 1));
@@ -713,4 +922,28 @@ test "perft on promotion-heavy position 5 with no castling rights through depth 
     try std.testing.expectEqual(@as(u64, 1452), perft(&position, 2));
     try std.testing.expectEqual(@as(u64, 59922), perft(&position, 3));
     try std.testing.expectEqual(@as(u64, 2018609), perft(&position, 4));
+}
+
+test "perft with castling rights matches standard counts" {
+    // Position 4 with black's kq rights.
+    const position4 = try fen.parseFen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1");
+    try std.testing.expectEqual(@as(u64, 6), perft(&position4, 1));
+    try std.testing.expectEqual(@as(u64, 264), perft(&position4, 2));
+    try std.testing.expectEqual(@as(u64, 9467), perft(&position4, 3));
+    try std.testing.expectEqual(@as(u64, 422333), perft(&position4, 4));
+
+    // Position 5 with white's KQ rights.
+    const position5 = try fen.parseFen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8");
+    try std.testing.expectEqual(@as(u64, 44), perft(&position5, 1));
+    try std.testing.expectEqual(@as(u64, 1486), perft(&position5, 2));
+    try std.testing.expectEqual(@as(u64, 62379), perft(&position5, 3));
+}
+
+test "Kiwipete perft through depth 4" {
+    const position = try fen.parseFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    try std.testing.expectEqual(@as(u64, 48), perft(&position, 1));
+    try std.testing.expectEqual(@as(u64, 2039), perft(&position, 2));
+    try std.testing.expectEqual(@as(u64, 97862), perft(&position, 3));
+    try std.testing.expectEqual(@as(u64, 4085603), perft(&position, 4));
 }
