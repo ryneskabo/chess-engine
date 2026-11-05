@@ -301,6 +301,55 @@ pub fn generateMoves(board: *const brd.Board, list: *MoveList) void {
     castlingMoves(board, color, list);
 }
 
+pub fn legalMoves(board: *const brd.Board, list: *MoveList) void {
+    var moves = MoveList{};
+    generateMoves(board, &moves);
+    for (moves.moves[0..moves.count]) |move| {
+        if (makeMoveIfLegal(board, move) != null) {
+            list.add(move);
+        }
+    }
+}
+
+pub fn hasLegalMove(board: *const brd.Board) bool {
+    var list = MoveList{};
+    generateMoves(board, &list);
+    for (list.moves[0..list.count]) |move| {
+        if (makeMoveIfLegal(board, move) != null) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn isInCheck(board: *const brd.Board, color: brd.Color) bool {
+    const king_bits = board.getBoard(color, .king);
+    std.debug.assert(king_bits != 0);
+    const king_position: brd.Square = @intCast(@ctz(king_bits));
+    return query.isSquareAttacked(board, king_position, color.opposite());
+}
+
+pub fn isCheckmate(board: *const brd.Board) bool {
+    return isInCheck(board, board.side_to_move) and !hasLegalMove(board);
+}
+
+pub fn isStalemate(board: *const brd.Board) bool {
+    return !isInCheck(board, board.side_to_move) and !hasLegalMove(board);
+}
+
+pub const GameEnd = enum {
+    stalemate,
+    checkmate,
+};
+
+pub fn gameEnd(board: *const brd.Board) ?GameEnd {
+    if (hasLegalMove(board)) return null;
+    if (isInCheck(board, board.side_to_move)) {
+        return .checkmate;
+    }
+    return .stalemate;
+}
+
 pub fn perft(board: *const brd.Board, depth: u32) u64 {
     if (depth == 0) return 1;
     var nodes: u64 = 0;
@@ -946,4 +995,77 @@ test "Kiwipete perft through depth 4" {
     try std.testing.expectEqual(@as(u64, 2039), perft(&position, 2));
     try std.testing.expectEqual(@as(u64, 97862), perft(&position, 3));
     try std.testing.expectEqual(@as(u64, 4085603), perft(&position, 4));
+}
+
+test "starting position has twenty legal moves and no game end" {
+    const position = try fen.parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    var legal = MoveList{};
+    legalMoves(&position, &legal);
+
+    try std.testing.expectEqual(@as(u16, 20), legal.count);
+    try std.testing.expect(hasLegalMove(&position));
+    try std.testing.expect(gameEnd(&position) == null);
+    try std.testing.expect(!isInCheck(&position, .white));
+}
+
+test "fool's mate is checkmate for white" {
+    const position = try fen.parseFen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+
+    try std.testing.expect(isInCheck(&position, .white));
+    try std.testing.expectEqual(GameEnd.checkmate, gameEnd(&position).?);
+    try std.testing.expect(isCheckmate(&position));
+    try std.testing.expect(!isStalemate(&position));
+    try std.testing.expect(!hasLegalMove(&position));
+}
+
+test "stalemate position has no legal moves and is not check" {
+    const position = try fen.parseFen("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1");
+
+    try std.testing.expect(!isInCheck(&position, .black));
+    try std.testing.expectEqual(GameEnd.stalemate, gameEnd(&position).?);
+    try std.testing.expect(isStalemate(&position));
+    try std.testing.expect(!isCheckmate(&position));
+    try std.testing.expect(!hasLegalMove(&position));
+}
+
+test "legalMoves filters out moves by a pinned piece" {
+    const position = try fen.parseFen("4r2k/8/8/8/8/8/4N3/4K3 w - - 0 1");
+
+    var pseudo = MoveList{};
+    generateMoves(&position, &pseudo);
+
+    var legal = MoveList{};
+    legalMoves(&position, &legal);
+
+    try std.testing.expect(legal.count < pseudo.count);
+
+    // The knight on e2 is pinned to the king by the rook on e8. All six of its
+    // pseudo-legal moves leave the king in check, so only the four king moves
+    // remain.
+    try std.testing.expectEqual(@as(u16, 10), pseudo.count);
+    try std.testing.expectEqual(@as(u16, 4), legal.count);
+}
+
+test "legalMoves agrees with perft depth 1 for every perft position" {
+    const positions = [_][]const u8{
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w - - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w - - 1 8",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+    };
+
+    for (positions) |fen_string| {
+        const board = try fen.parseFen(fen_string);
+
+        var legal = MoveList{};
+        legalMoves(&board, &legal);
+
+        try std.testing.expectEqual(perft(&board, 1), @as(u64, legal.count));
+        try std.testing.expectEqual(legal.count > 0, hasLegalMove(&board));
+    }
 }
