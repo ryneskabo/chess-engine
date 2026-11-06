@@ -1069,3 +1069,17 @@ test "legalMoves agrees with perft depth 1 for every perft position" {
         try std.testing.expectEqual(legal.count > 0, hasLegalMove(&board));
     }
 }
+
+test "legalMoves rejects en passant capture that exposes the king horizontally" {
+    const position = try fen.parseFen("8/8/8/KPp4r/8/8/8/7k w - c6 0 1");
+    const ep_capture = Move{ .from = 33, .to = 42, .flags = .en_passant_capture };
+
+    var pseudo = MoveList{};
+    generateMoves(&position, &pseudo);
+
+    var legal = MoveList{};
+    legalMoves(&position, &legal);
+
+    try std.testing.expect(hasMove(&pseudo, ep_capture));
+    try std.testing.expect(!hasMove(&legal, ep_capture));
+}
