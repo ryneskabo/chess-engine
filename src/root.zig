@@ -2,12 +2,14 @@ pub const board = @import("board.zig");
 pub const fen = @import("fen.zig");
 pub const attacks = @import("attacks.zig");
 pub const movegen = @import("movegen.zig");
+pub const eval = @import("eval.zig");
 
 test {
     _ = @import("board.zig");
     _ = @import("fen.zig");
     _ = @import("attacks.zig");
     _ = @import("movegen.zig");
+    _ = @import("eval.zig");
     // Import test-bearing submodules directly; facade imports alone do not
     // make their tests part of the root test binary.
     _ = @import("attacks/leapers.zig");
