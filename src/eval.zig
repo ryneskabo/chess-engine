@@ -86,65 +86,46 @@ const king_endgame_square_table = [64]i16{
     -50, -40, -30, -20, -20, -30, -40, -50,
 };
 
+fn pieceValue(piece: brd.Piece) i64 {
+    return switch (piece) {
+        .pawn => pawn_value,
+        .knight => knight_value,
+        .bishop => bishop_value,
+        .rook => rook_value,
+        .queen => queen_value,
+        .king => king_value,
+    };
+}
+
 pub fn evaluateMaterial(board: *const brd.Board) i64 {
-    const white_pawn_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.white, .pawn)))) * pawn_value;
-    const black_pawn_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.black, .pawn)))) * pawn_value;
+    var white_value: i64 = 0;
+    var black_value: i64 = 0;
 
-    const white_knight_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.white, .knight)))) * knight_value;
-    const black_knight_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.black, .knight)))) * knight_value;
-
-    const white_bishop_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.white, .bishop)))) * bishop_value;
-    const black_bishop_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.black, .bishop)))) * bishop_value;
-
-    const white_rook_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.white, .rook)))) * rook_value;
-    const black_rook_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.black, .rook)))) * rook_value;
-
-    const white_queen_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.white, .queen)))) * queen_value;
-    const black_queen_value: i64 = @as(i64, @intCast(@popCount(board.getBoard(.black, .queen)))) * queen_value;
-
-    const white_value = white_pawn_value + white_knight_value + white_bishop_value + white_rook_value + white_queen_value;
-    const black_value = black_pawn_value + black_knight_value + black_bishop_value + black_rook_value + black_queen_value;
+    inline for (std.enums.values(brd.Piece)) |piece| {
+        const value = pieceValue(piece);
+        white_value += @as(i64, @intCast(@popCount(board.getBoard(.white, piece)))) * value;
+        black_value += @as(i64, @intCast(@popCount(board.getBoard(.black, piece)))) * value;
+    }
 
     return if (board.side_to_move == .white) white_value - black_value else black_value - white_value;
 }
 
 pub fn evaluate(board: *const brd.Board) i64 {
-    const white_pawn_board = board.getBoard(.white, .pawn);
-    const white_pawn_value: i64 = @as(i64, @intCast(@popCount(white_pawn_board))) * pawn_value + positionEvaluation(board, white_pawn_board, .pawn);
-    const black_pawn_board = board.getBoard(.black, .pawn);
-    const black_pawn_value: i64 = @as(i64, @intCast(@popCount(black_pawn_board))) * pawn_value + positionEvaluation(board, @byteSwap(black_pawn_board), .pawn);
+    var white_position: i64 = 0;
+    var black_position: i64 = 0;
 
-    const white_knight_board = board.getBoard(.white, .knight);
-    const white_knight_value: i64 = @as(i64, @intCast(@popCount(white_knight_board))) * knight_value + positionEvaluation(board, white_knight_board, .knight);
-    const black_knight_board = board.getBoard(.black, .knight);
-    const black_knight_value: i64 = @as(i64, @intCast(@popCount(black_knight_board))) * knight_value + positionEvaluation(board, @byteSwap(black_knight_board), .knight);
+    inline for (std.enums.values(brd.Piece)) |piece| {
+        const piece_table = pieceSquareTable(board, piece);
+        white_position += positionEvaluation(board.getBoard(.white, piece), piece_table);
+        black_position += positionEvaluation(@byteSwap(board.getBoard(.black, piece)), piece_table);
+    }
 
-    const white_bishop_board = board.getBoard(.white, .bishop);
-    const white_bishop_value: i64 = @as(i64, @intCast(@popCount(white_bishop_board))) * bishop_value + positionEvaluation(board, white_bishop_board, .bishop);
-    const black_bishop_board = board.getBoard(.black, .bishop);
-    const black_bishop_value: i64 = @as(i64, @intCast(@popCount(black_bishop_board))) * bishop_value + positionEvaluation(board, @byteSwap(black_bishop_board), .bishop);
-
-    const white_rook_board = board.getBoard(.white, .rook);
-    const white_rook_value: i64 = @as(i64, @intCast(@popCount(white_rook_board))) * rook_value + positionEvaluation(board, white_rook_board, .rook);
-    const black_rook_board = board.getBoard(.black, .rook);
-    const black_rook_value: i64 = @as(i64, @intCast(@popCount(black_rook_board))) * rook_value + positionEvaluation(board, @byteSwap(black_rook_board), .rook);
-
-    const white_queen_board = board.getBoard(.white, .queen);
-    const white_queen_value: i64 = @as(i64, @intCast(@popCount(white_queen_board))) * queen_value + positionEvaluation(board, white_queen_board, .queen);
-    const black_queen_board = board.getBoard(.black, .queen);
-    const black_queen_value: i64 = @as(i64, @intCast(@popCount(black_queen_board))) * queen_value + positionEvaluation(board, @byteSwap(black_queen_board), .queen);
-
-    const white_king_value: i64 = positionEvaluation(board, board.getBoard(.white, .king), .king);
-    const black_king_value: i64 = positionEvaluation(board, @byteSwap(board.getBoard(.black, .king)), .king);
-
-    const white_value = white_pawn_value + white_knight_value + white_bishop_value + white_rook_value + white_queen_value + white_king_value;
-    const black_value = black_pawn_value + black_knight_value + black_bishop_value + black_rook_value + black_queen_value + black_king_value;
-
-    return if (board.side_to_move == .white) white_value - black_value else black_value - white_value;
+    const position_value = if (board.side_to_move == .white) white_position - black_position else black_position - white_position;
+    return evaluateMaterial(board) + position_value;
 }
 
-fn positionEvaluation(board: *const brd.Board, piece_board: u64, comptime piece: brd.Piece) i64 {
-    const piece_table = switch (piece) {
+fn pieceSquareTable(board: *const brd.Board, piece: brd.Piece) *const [64]i16 {
+    return switch (piece) {
         .pawn => &pawn_square_table,
         .knight => &knight_square_table,
         .bishop => &bishop_square_table,
@@ -172,7 +153,9 @@ fn positionEvaluation(board: *const brd.Board, piece_board: u64, comptime piece:
             break :blk &king_endgame_square_table;
         },
     };
+}
 
+fn positionEvaluation(piece_board: u64, piece_table: *const [64]i16) i64 {
     var bb = piece_board;
     var sum: i64 = 0;
     while (bb != 0) : (bb &= bb - 1) {
@@ -284,5 +267,40 @@ test "evaluateMaterial matches hand-counted totals" {
 
         board.side_to_move = .black;
         try std.testing.expectEqual(-case.expected_white, evaluateMaterial(&board));
+    }
+}
+
+test "piece-square table orientation" {
+    // A white pawn on e4 scores higher than a white pawn on e2
+    const white_pawn_e4 = try fen.parseFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
+    const white_pawn_e2 = try fen.parseFen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    try std.testing.expect(evaluate(&white_pawn_e4) > evaluate(&white_pawn_e2));
+
+    // A black pawn on e5 scores higher for black than a black pawn on e7
+    const black_pawn_e5 = try fen.parseFen("4k3/8/8/4p3/8/8/8/4K3 b - - 0 1");
+    const black_pawn_e7 = try fen.parseFen("4k3/4p3/8/8/8/8/8/4K3 b - - 0 1");
+    try std.testing.expect(evaluate(&black_pawn_e5) > evaluate(&black_pawn_e7));
+
+    // A white knight on e4 scores higher than a white knight on a1
+    const white_knight_e4 = try fen.parseFen("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
+    const white_knight_a1 = try fen.parseFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
+    try std.testing.expect(evaluate(&white_knight_e4) > evaluate(&white_knight_a1));
+
+    // Middlegame (queens and rooks on the board): a white king on g1 scores higher than on e4
+    const white_king_g1_mg = try fen.parseFen("r2qk2r/8/8/8/8/8/8/R2Q2KR w - - 0 1");
+    const white_king_e4_mg = try fen.parseFen("r2qk2r/8/8/8/4K3/8/8/R2Q3R w - - 0 1");
+    try std.testing.expect(evaluate(&white_king_g1_mg) > evaluate(&white_king_e4_mg));
+
+    // A white pawn on rank 7 scores much higher than the same pawn on rank 2
+    for (0..8) |file| {
+        var rank7_board = try fen.parseFen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+        var rank2_board = rank7_board;
+
+        const rank7_sq: brd.Square = @intCast(6 * 8 + file);
+        const rank2_sq: brd.Square = @intCast(1 * 8 + file);
+        rank7_board.setPiece(.white, .pawn, rank7_sq);
+        rank2_board.setPiece(.white, .pawn, rank2_sq);
+
+        try std.testing.expect(evaluate(&rank7_board) - evaluate(&rank2_board) >= 40);
     }
 }
