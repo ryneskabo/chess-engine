@@ -226,3 +226,41 @@ test "piece at is null after removePiece" {
     try std.testing.expectEqual(@as(u64, 0), board.getBoard(.white, .knight));
     try std.testing.expectEqual(@as(u64, 0), board.occupancy[@backingInt(Color.white)]);
 }
+
+test "Color.opposite flips white and black" {
+    try std.testing.expectEqual(Color.black, Color.white.opposite());
+    try std.testing.expectEqual(Color.white, Color.black.opposite());
+    try std.testing.expectEqual(Color.white, Color.white.opposite().opposite());
+    try std.testing.expectEqual(Color.black, Color.black.opposite().opposite());
+}
+
+test "castling_mask has expected masks on home squares and preserves all others" {
+    try std.testing.expectEqual(~white_queenside, castling_mask[0]); // a1
+    try std.testing.expectEqual(~(white_kingside | white_queenside), castling_mask[4]); // e1
+    try std.testing.expectEqual(~white_kingside, castling_mask[7]); // h1
+    try std.testing.expectEqual(~black_queenside, castling_mask[56]); // a8
+    try std.testing.expectEqual(~(black_kingside | black_queenside), castling_mask[60]); // e8
+    try std.testing.expectEqual(~black_kingside, castling_mask[63]); // h8
+
+    for (0..64) |sq| {
+        switch (sq) {
+            0, 4, 7, 56, 60, 63 => {},
+            else => try std.testing.expectEqual(@as(CastlingRights, 0b1111), castling_mask[sq]),
+        }
+    }
+}
+
+test "removePiece preserves remaining pieces of the same color and type" {
+    var board: Board = empty;
+    board.setPiece(.white, .knight, 1); // b1
+    board.setPiece(.white, .knight, 6); // g1
+    board.setPiece(.white, .rook, 0); // a1
+
+    board.removePiece(.white, .knight, 1);
+
+    try std.testing.expectEqual(null, board.pieceAt(1));
+    try std.testing.expectEqual(Board.PieceOnSquare{ .color = .white, .piece = .knight }, board.pieceAt(6));
+    try std.testing.expectEqual(Board.PieceOnSquare{ .color = .white, .piece = .rook }, board.pieceAt(0));
+    try std.testing.expectEqual(squareBit(6), board.getBoard(.white, .knight));
+    try std.testing.expectEqual(squareBit(0) | squareBit(6), board.occupancy[@backingInt(Color.white)]);
+}

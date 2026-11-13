@@ -286,10 +286,34 @@ test "piece-square table orientation" {
     const white_knight_a1 = try fen.parseFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
     try std.testing.expect(evaluate(&white_knight_e4) > evaluate(&white_knight_a1));
 
+    // A white bishop on d4 or g2 scores higher than a white bishop on a1
+    const white_bishop_d4 = try fen.parseFen("4k3/8/8/8/3B4/8/8/4K3 w - - 0 1");
+    const white_bishop_g2 = try fen.parseFen("4k3/8/8/8/8/8/6B1/4K3 w - - 0 1");
+    const white_bishop_a1 = try fen.parseFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
+    try std.testing.expect(evaluate(&white_bishop_d4) > evaluate(&white_bishop_a1));
+    try std.testing.expect(evaluate(&white_bishop_g2) > evaluate(&white_bishop_a1));
+
+    // A white rook on the 7th rank (d7) scores higher than on d1, which scores higher than on a3
+    const white_rook_d7 = try fen.parseFen("4k3/3R4/8/8/8/8/8/4K3 w - - 0 1");
+    const white_rook_d1 = try fen.parseFen("4k3/8/8/8/8/8/8/3RK3 w - - 0 1");
+    const white_rook_a3 = try fen.parseFen("4k3/8/8/8/8/R7/8/4K3 w - - 0 1");
+    try std.testing.expect(evaluate(&white_rook_d7) > evaluate(&white_rook_d1));
+    try std.testing.expect(evaluate(&white_rook_d1) > evaluate(&white_rook_a3));
+
+    // A white queen in the center (e4) scores higher than in the corner (a1)
+    const white_queen_e4 = try fen.parseFen("4k3/8/8/8/4Q3/8/8/4K3 w - - 0 1");
+    const white_queen_a1 = try fen.parseFen("4k3/8/8/8/8/8/8/Q3K3 w - - 0 1");
+    try std.testing.expect(evaluate(&white_queen_e4) > evaluate(&white_queen_a1));
+
     // Middlegame (queens and rooks on the board): a white king on g1 scores higher than on e4
     const white_king_g1_mg = try fen.parseFen("r2qk2r/8/8/8/8/8/8/R2Q2KR w - - 0 1");
     const white_king_e4_mg = try fen.parseFen("r2qk2r/8/8/8/4K3/8/8/R2Q3R w - - 0 1");
     try std.testing.expect(evaluate(&white_king_g1_mg) > evaluate(&white_king_e4_mg));
+
+    // Endgame (no queens): a centralized white king on e4 scores higher than on g1
+    const white_king_e4_eg = try fen.parseFen("4k3/8/8/8/4K3/8/8/8 w - - 0 1");
+    const white_king_g1_eg = try fen.parseFen("4k3/8/8/8/8/8/8/6K1 w - - 0 1");
+    try std.testing.expect(evaluate(&white_king_e4_eg) > evaluate(&white_king_g1_eg));
 
     // A white pawn on rank 7 scores much higher than the same pawn on rank 2
     for (0..8) |file| {
@@ -302,5 +326,68 @@ test "piece-square table orientation" {
         rank2_board.setPiece(.white, .pawn, rank2_sq);
 
         try std.testing.expect(evaluate(&rank7_board) - evaluate(&rank2_board) >= 40);
+    }
+}
+
+test "king phase transitions between middlegame and endgame tables" {
+    // Compare White King on g1 (6) vs e4 (28):
+    // In middlegame table: g1 = +30, e4 = -50 -> g1 - e4 = +80
+    // In endgame table:    g1 = -30, e4 = +40 -> g1 - e4 = -70
+    const mg_diff: i64 = king_middlegame_square_table[6] - king_middlegame_square_table[28];
+    const eg_diff: i64 = king_endgame_square_table[6] - king_endgame_square_table[28];
+
+    const cases = [_]struct {
+        fen_g1: []const u8,
+        fen_e4: []const u8,
+        expected_diff: i64,
+    }{
+        // 1. Neither side has a queen (even with rooks and minors) -> endgame table
+        .{
+            .fen_g1 = "r1b1k1nr/8/8/8/8/8/8/R1B3KR w - - 0 1",
+            .fen_e4 = "r1b1k1nr/8/8/8/4K3/8/8/R1B4R w - - 0 1",
+            .expected_diff = eg_diff,
+        },
+        // 2. Queen + 0 rooks + 0 minors -> endgame table
+        .{
+            .fen_g1 = "3qk3/8/8/8/8/8/8/3Q2K1 w - - 0 1",
+            .fen_e4 = "3qk3/8/8/8/4K3/8/8/3Q4 w - - 0 1",
+            .expected_diff = eg_diff,
+        },
+        // 3. Queen + 0 rooks + 1 minor per side -> endgame table
+        .{
+            .fen_g1 = "2nqk3/8/8/8/8/8/8/2BQ2K1 w - - 0 1",
+            .fen_e4 = "2nqk3/8/8/8/4K3/8/8/2BQ4 w - - 0 1",
+            .expected_diff = eg_diff,
+        },
+        // 4. White has Queen + 2 minors -> middlegame table
+        .{
+            .fen_g1 = "4k3/8/8/8/8/8/8/1NBQ2K1 w - - 0 1",
+            .fen_e4 = "4k3/8/8/8/4K3/8/8/1NBQ4 w - - 0 1",
+            .expected_diff = mg_diff,
+        },
+        // 5. Black has Queen + 2 minors (White has bare king) -> middlegame table
+        .{
+            .fen_g1 = "1nbqk3/8/8/8/8/8/8/6K1 w - - 0 1",
+            .fen_e4 = "1nbqk3/8/8/8/4K3/8/8/8 w - - 0 1",
+            .expected_diff = mg_diff,
+        },
+        // 6. White has Queen + 1 rook (0 minors) -> middlegame table
+        .{
+            .fen_g1 = "4k3/8/8/8/8/8/8/R2Q2K1 w - - 0 1",
+            .fen_e4 = "4k3/8/8/8/4K3/8/8/R2Q4 w - - 0 1",
+            .expected_diff = mg_diff,
+        },
+        // 7. Black has Queen + 1 rook (White has bare king) -> middlegame table
+        .{
+            .fen_g1 = "r2qk3/8/8/8/8/8/8/6K1 w - - 0 1",
+            .fen_e4 = "r2qk3/8/8/8/4K3/8/8/8 w - - 0 1",
+            .expected_diff = mg_diff,
+        },
+    };
+
+    for (cases) |case| {
+        const board_g1 = try fen.parseFen(case.fen_g1);
+        const board_e4 = try fen.parseFen(case.fen_e4);
+        try std.testing.expectEqual(case.expected_diff, evaluate(&board_g1) - evaluate(&board_e4));
     }
 }

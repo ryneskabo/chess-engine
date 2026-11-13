@@ -663,6 +663,16 @@ test "makeMove clears castling rights when kings and rooks move or are captured"
             .move = .{ .from = 46, .to = 63, .flags = .capture }, // Ng6xh8
             .expected = "4k2N/8/8/8/8/8/8/4K3 b q - 0 1",
         },
+        .{
+            .start = "r3k2r/1P6/8/8/8/8/8/4K3 w kq - 0 1",
+            .move = .{ .from = 49, .to = 56, .flags = .queen_promotion_capture }, // b7xa8=Q
+            .expected = "Q3k2r/8/8/8/8/8/8/4K3 b k - 0 1",
+        },
+        .{
+            .start = "4k3/8/8/8/8/8/6p1/R3K2R b KQ - 0 1",
+            .move = .{ .from = 14, .to = 7, .flags = .queen_promotion_capture }, // g2xh1=q
+            .expected = "4k3/8/8/8/8/8/8/R3K2q w Q - 0 2",
+        },
     };
 
     for (cases) |case| {
@@ -842,18 +852,30 @@ test "castlingMoves is blocked by a piece of either color in every castle path" 
         kingside: bool,
         queenside: bool,
     }{
-        // White kingside blocked on f1 by a friendly or enemy knight.
+        // White kingside blocked on f1 or g1 by a friendly or enemy knight.
         .{ .fen = "r3k2r/8/8/8/8/8/8/R3KN1R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
         .{ .fen = "r3k2r/8/8/8/8/8/8/R3Kn1R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
-        // White queenside blocked on b1 by a friendly or enemy knight.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3K1NR w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R3K1nR w KQkq - 0 1", .color = .white, .kingside = false, .queenside = true },
+        // White queenside blocked on b1, c1, or d1 by a friendly or enemy knight.
         .{ .fen = "r3k2r/8/8/8/8/8/8/RN2K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
         .{ .fen = "r3k2r/8/8/8/8/8/8/Rn2K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
-        // Black kingside blocked on f8 by a friendly or enemy knight.
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R1N1K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R1n1K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R2NK2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        .{ .fen = "r3k2r/8/8/8/8/8/8/R2nK2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
+        // Black kingside blocked on f8 or g8 by a friendly or enemy knight.
         .{ .fen = "r3kN1r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
         .{ .fen = "r3kn1r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
-        // Black queenside blocked on b8 by a friendly or enemy knight.
+        .{ .fen = "r3k1Nr/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        .{ .fen = "r3k1nr/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        // Black queenside blocked on b8, c8, or d8 by a friendly or enemy knight.
         .{ .fen = "rN2k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
         .{ .fen = "rn2k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        .{ .fen = "r1N1k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        .{ .fen = "r1n1k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        .{ .fen = "r2Nk2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        .{ .fen = "r2nk2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
     };
 
     for (cases) |case| {
@@ -874,6 +896,9 @@ test "castlingMoves requires rights and the rook on its home square" {
         .{ .fen = "r3k2r/8/8/8/8/8/8/4K2R w KQkq - 0 1", .color = .white, .kingside = true, .queenside = false },
         .{ .fen = "r3k3/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
         .{ .fen = "4k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        // Rights are present, but the king is not on its home square (e1/e8).
+        .{ .fen = "r3k2r/8/8/8/8/8/4K3/R6R w KQkq - 0 1", .color = .white, .kingside = false, .queenside = false },
+        .{ .fen = "r6r/4k3/8/8/8/8/8/R3K2R b KQkq - 0 1", .color = .black, .kingside = false, .queenside = false },
         // No castling rights at all.
         .{ .fen = "r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1", .color = .white, .kingside = false, .queenside = false },
         // Starting position has rights, but both paths are blocked.
@@ -911,10 +936,16 @@ test "castlingMoves rejects check and attacked king paths" {
         .{ .fen = "r3k2r/8/8/8/8/8/4R3/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = false },
         // Black king cannot pass through f8.
         .{ .fen = "r3k2r/8/8/8/8/8/5R2/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
+        // Black king cannot pass through d8.
+        .{ .fen = "r3k2r/8/8/8/8/8/3R4/R3K3 b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
         // Black king cannot land on g8.
         .{ .fen = "r3k2r/8/8/8/8/8/6R1/R3K3 b KQkq - 0 1", .color = .black, .kingside = false, .queenside = true },
         // Black king cannot land on c8.
         .{ .fen = "r3k2r/8/8/8/8/8/2R5/R3K3 b KQkq - 0 1", .color = .black, .kingside = true, .queenside = false },
+        // Only b8 is attacked, so black queenside castling is still legal.
+        .{ .fen = "r3k2r/8/8/8/8/8/1R6/4K3 b kq - 0 1", .color = .black, .kingside = true, .queenside = true },
+        // Only the black rook squares (a8/h8) are attacked, which does not prevent castling.
+        .{ .fen = "r3k2r/8/8/8/8/8/R6R/4K3 b kq - 0 1", .color = .black, .kingside = true, .queenside = true },
     };
 
     for (cases) |case| {
@@ -1082,4 +1113,113 @@ test "legalMoves rejects en passant capture that exposes the king horizontally" 
 
     try std.testing.expect(hasMove(&pseudo, ep_capture));
     try std.testing.expect(!hasMove(&legal, ep_capture));
+
+    // Mirror for Black: black pawn on b4 (25) capturing white pawn on c4 (26) via c3 (18) exposes ka4 (24) to Rh4 (31).
+    const black_position = try fen.parseFen("7K/8/8/8/kpP4R/8/8/8 b - c3 0 1");
+    const black_ep_capture = Move{ .from = 25, .to = 18, .flags = .en_passant_capture };
+
+    var black_pseudo = MoveList{};
+    generateMoves(&black_position, &black_pseudo);
+
+    var black_legal = MoveList{};
+    legalMoves(&black_position, &black_legal);
+
+    try std.testing.expect(hasMove(&black_pseudo, black_ep_capture));
+    try std.testing.expect(!hasMove(&black_legal, black_ep_capture));
+}
+
+test "in-check position with legal evasions is neither checkmate nor stalemate" {
+    // White king on e1 is in check from black rook on e8, but can step to d1/f1/d2/f2 or block/capture with Re2.
+    const position = try fen.parseFen("4r2k/8/8/8/8/8/R7/4K3 w - - 0 1");
+
+    try std.testing.expect(isInCheck(&position, .white));
+    try std.testing.expect(!isInCheck(&position, .black));
+    try std.testing.expect(hasLegalMove(&position));
+    try std.testing.expect(!isCheckmate(&position));
+    try std.testing.expect(!isStalemate(&position));
+    try std.testing.expectEqual(@as(?GameEnd, null), gameEnd(&position));
+}
+
+test "black checkmate and white stalemate are detected for the side to move" {
+    // Back-rank checkmate against Black.
+    const black_mated = try fen.parseFen("3R2k1/5ppp/8/8/8/8/8/4K3 b - - 0 1");
+    try std.testing.expect(isInCheck(&black_mated, .black));
+    try std.testing.expect(!hasLegalMove(&black_mated));
+    try std.testing.expect(isCheckmate(&black_mated));
+    try std.testing.expect(!isStalemate(&black_mated));
+    try std.testing.expectEqual(@as(?GameEnd, .checkmate), gameEnd(&black_mated));
+
+    // White king trapped in the a1 corner by black queen on b3 and king on c2.
+    const white_stalemated = try fen.parseFen("8/8/8/8/8/1q6/2k5/K7 w - - 0 1");
+    try std.testing.expect(!isInCheck(&white_stalemated, .white));
+    try std.testing.expect(!hasLegalMove(&white_stalemated));
+    try std.testing.expect(isStalemate(&white_stalemated));
+    try std.testing.expect(!isCheckmate(&white_stalemated));
+    try std.testing.expectEqual(@as(?GameEnd, .stalemate), gameEnd(&white_stalemated));
+}
+
+test "double check allows only king moves and rejects capturing or blocking a single attacker" {
+    // White king on e1 is in double check from black rook on e8 and black knight on f3.
+    // White rook on a8 attacks e8 (could capture the rook) and white bishop on c4 attacks e2 (could block the rook),
+    // and white pawn on g2 attacks f3 (could capture the knight), but none resolve both checks simultaneously.
+    const position = try fen.parseFen("R3r2k/8/8/8/2B5/5n2/6P1/4K3 w - - 0 1");
+
+    var legal = MoveList{};
+    legalMoves(&position, &legal);
+
+    try std.testing.expect(isInCheck(&position, .white));
+    for (legal.moves[0..legal.count]) |m| {
+        try std.testing.expectEqual(@as(brd.Square, 4), m.from); // Only Ke1 moves are legal
+    }
+    // Ke1 can move to d1 (3), f1 (5), or f2 (13); d2 (11) is attacked by Nf3 and e2 (12) by Re8.
+    try std.testing.expectEqual(@as(u16, 3), legal.count);
+}
+
+test "pinned slider and pawn can move or capture along the pin ray but not off it" {
+    // White rook on e2 (12) is pinned along the e-file to Ke1 (4) by black rook on e5 (36).
+    const file_pin = try fen.parseFen("7k/8/8/4r3/8/8/4R3/4K3 w - - 0 1");
+    var file_legal = MoveList{};
+    legalMoves(&file_pin, &file_legal);
+
+    // Re2 can move along the pin ray to e3 (20), e4 (28), or capture on e5 (36), but cannot move horizontally to d2 (11) or f2 (13).
+    try std.testing.expect(hasMove(&file_legal, .{ .from = 12, .to = 20, .flags = .quiet_move }));
+    try std.testing.expect(hasMove(&file_legal, .{ .from = 12, .to = 28, .flags = .quiet_move }));
+    try std.testing.expect(hasMove(&file_legal, .{ .from = 12, .to = 36, .flags = .capture }));
+    try std.testing.expect(!hasMove(&file_legal, .{ .from = 12, .to = 11, .flags = .quiet_move }));
+    try std.testing.expect(!hasMove(&file_legal, .{ .from = 12, .to = 13, .flags = .quiet_move }));
+
+    // White pawn on d2 (11) is pinned along the c3-e1 diagonal to Ke1 (4) by black bishop on c3 (18), with black knight on e3 (20).
+    // d2 cannot push to d3 (19)/d4 (27) or capture e3 (20), but CAN capture the pinning bishop on c3 (18).
+    const diag_pin = try fen.parseFen("7k/8/8/8/8/2b1n3/3P4/4K3 w - - 0 1");
+    var diag_legal = MoveList{};
+    legalMoves(&diag_pin, &diag_legal);
+
+    try std.testing.expect(hasMove(&diag_legal, .{ .from = 11, .to = 18, .flags = .capture }));
+    try std.testing.expect(!hasMove(&diag_legal, .{ .from = 11, .to = 19, .flags = .quiet_move }));
+    try std.testing.expect(!hasMove(&diag_legal, .{ .from = 11, .to = 27, .flags = .double_pawn_push }));
+    try std.testing.expect(!hasMove(&diag_legal, .{ .from = 11, .to = 20, .flags = .capture }));
+}
+
+test "en passant legality when pawn is diagonally pinned or when capturing a checking pawn" {
+    // 1. White pawn on e5 (36) is pinned diagonally to Kc3 (18) by black bishop on g7 (54).
+    // Capturing en passant on d6 (43) leaves the c3-g7 diagonal, so it is illegal.
+    const pinned_ep = try fen.parseFen("7k/6b1/8/3pP3/8/2K5/8/8 w - d6 0 1");
+    const ep_move = Move{ .from = 36, .to = 43, .flags = .en_passant_capture };
+
+    var pinned_pseudo = MoveList{};
+    generateMoves(&pinned_ep, &pinned_pseudo);
+    var pinned_legal = MoveList{};
+    legalMoves(&pinned_ep, &pinned_legal);
+
+    try std.testing.expect(hasMove(&pinned_pseudo, ep_move));
+    try std.testing.expect(!hasMove(&pinned_legal, ep_move));
+
+    // 2. Black double-pushed d7-d5 (35), giving check to the white king on c4 (26).
+    // White pawn on e5 (36) can legally resolve the check via en passant e5xd6 (43).
+    const checking_ep = try fen.parseFen("7k/8/8/3pP3/2K5/8/8/8 w - d6 0 1");
+    try std.testing.expect(isInCheck(&checking_ep, .white));
+
+    var checking_legal = MoveList{};
+    legalMoves(&checking_ep, &checking_legal);
+    try std.testing.expect(hasMove(&checking_legal, ep_move));
 }

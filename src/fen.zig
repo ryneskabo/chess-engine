@@ -149,7 +149,24 @@ test "parses starting position" {
     try std.testing.expectEqual(@as(u64, 0x00FF000000000000), b.getBoard(.black, .pawn));
 
     // White knights
-    try std.testing.expectEqual(@as(u64, 0x42), b.getBoard(.white, .knight));
+    try std.testing.expectEqual(brd.squareBit(1) | brd.squareBit(6), b.getBoard(.white, .knight));
+    // Black knights
+    try std.testing.expectEqual(brd.squareBit(57) | brd.squareBit(62), b.getBoard(.black, .knight));
+
+    // White bishops
+    try std.testing.expectEqual(brd.squareBit(2) | brd.squareBit(5), b.getBoard(.white, .bishop));
+    // Black bishops
+    try std.testing.expectEqual(brd.squareBit(58) | brd.squareBit(61), b.getBoard(.black, .bishop));
+
+    // White rooks
+    try std.testing.expectEqual(brd.squareBit(0) | brd.squareBit(7), b.getBoard(.white, .rook));
+    // Black rooks
+    try std.testing.expectEqual(brd.squareBit(56) | brd.squareBit(63), b.getBoard(.black, .rook));
+
+    // White queen
+    try std.testing.expectEqual(brd.squareBit(3), b.getBoard(.white, .queen));
+    // Black queen
+    try std.testing.expectEqual(brd.squareBit(59), b.getBoard(.black, .queen));
 
     // White king
     try std.testing.expectEqual(brd.squareBit(4), b.getBoard(.white, .king));
@@ -260,6 +277,40 @@ test "kiwipete" {
     try std.testing.expect(b.getBoard(.white, .queen) & brd.squareBit(21) != 0);
 }
 
+test "individual castling rights, rank-6 and edge en passant, and max counters" {
+    const castling_cases = [_]struct { field: []const u8, expected: brd.CastlingRights }{
+        .{ .field = "K", .expected = brd.white_kingside },
+        .{ .field = "Q", .expected = brd.white_queenside },
+        .{ .field = "k", .expected = brd.black_kingside },
+        .{ .field = "q", .expected = brd.black_queenside },
+        .{ .field = "Qk", .expected = brd.white_queenside | brd.black_kingside },
+    };
+
+    for (castling_cases) |case| {
+        var buf: [64]u8 = undefined;
+        const fen_str = try std.fmt.bufPrint(&buf, "r3k2r/8/8/8/8/8/8/R3K2R w {s} - 0 1", .{case.field});
+        const b = try parseFen(fen_str);
+        try std.testing.expectEqual(case.expected, b.castling_rights);
+    }
+
+    const ep_cases = [_]struct { field: []const u8, expected: brd.Square }{
+        .{ .field = "a3", .expected = 16 },
+        .{ .field = "h3", .expected = 23 },
+        .{ .field = "a6", .expected = 40 },
+        .{ .field = "e6", .expected = 44 },
+        .{ .field = "h6", .expected = 47 },
+    };
+
+    for (ep_cases) |case| {
+        var buf: [64]u8 = undefined;
+        const fen_str = try std.fmt.bufPrint(&buf, "4k3/8/8/8/8/8/8/4K3 w - {s} 255 65535", .{case.field});
+        const b = try parseFen(fen_str);
+        try std.testing.expectEqual(@as(?brd.Square, case.expected), b.en_passant);
+        try std.testing.expectEqual(@as(u8, 255), b.halfmove_clock);
+        try std.testing.expectEqual(@as(u16, 65535), b.fullmove_number);
+    }
+}
+
 // INVALID INPUT TESTS
 test "rejects invalid FENs" {
     const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
@@ -267,6 +318,7 @@ test "rejects invalid FENs" {
     const cases = [_]struct { fen: []const u8, err: anyerror }{
         // Piece placement
         .{ .fen = "", .err = InvalidFen.InvalidPiecePlacement },
+        .{ .fen = " " ++ start ++ " w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // leading space
         .{ .fen = "rnbqkbnr/pppppppp/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // 7 ranks
         .{ .fen = "rnbqkbnr/pppppppp/8/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // 9 ranks
         .{ .fen = "rnbqkbnrr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", .err = InvalidFen.InvalidPiecePlacement }, // 9 files
@@ -283,6 +335,7 @@ test "rejects invalid FENs" {
         // Field count
         .{ .fen = start ++ " w KQkq - 0", .err = InvalidFen.InvalidNumberOfFields }, // missing field
         .{ .fen = start ++ " w KQkq - 0 1 x", .err = InvalidFen.InvalidNumberOfFields }, // extra field
+        .{ .fen = start ++ " w KQkq - 0 1 ", .err = InvalidFen.InvalidNumberOfFields }, // trailing space
 
         // Side to move
         .{ .fen = start ++ " x KQkq - 0 1", .err = InvalidFen.InvalidSideToMove },
@@ -294,11 +347,16 @@ test "rejects invalid FENs" {
 
         // En passant
         .{ .fen = start ++ " w KQkq e4 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // wrong rank
+        .{ .fen = start ++ " w KQkq e2 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // wrong rank
+        .{ .fen = start ++ " w KQkq e7 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // wrong rank
+        .{ .fen = start ++ " w KQkq `3 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // one before 'a'
+        .{ .fen = start ++ " w KQkq i3 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // one after 'h'
         .{ .fen = start ++ " w KQkq z3 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // off the board
         .{ .fen = start ++ " w KQkq e 0 1", .err = InvalidFen.InvalidEnPassantSquare }, // wrong length
 
         // Counters
         .{ .fen = start ++ " w KQkq - a 1", .err = InvalidFen.InvalidHalfmoveClock },
+        .{ .fen = start ++ " w KQkq - -1 1", .err = InvalidFen.InvalidHalfmoveClock }, // negative halfmove clock
         .{ .fen = start ++ " w KQkq - 256 1", .err = InvalidFen.InvalidHalfmoveClock }, // overflows u8
         .{ .fen = start ++ " w KQkq - 0 -1", .err = InvalidFen.InvalidFullmoveCounter },
         .{ .fen = start ++ " w KQkq - 0 0", .err = InvalidFen.InvalidFullmoveCounter }, // must start at 1
